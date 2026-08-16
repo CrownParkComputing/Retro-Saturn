@@ -14,7 +14,6 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:path/path.dart' as p;
-import 'package:path_provider/path_provider.dart';
 
 class AppLog {
   AppLog._();
@@ -30,13 +29,16 @@ class AppLog {
   /// Where the log file lives, once [init] has run.
   static String? get filePath => _filePath;
 
-  /// One-shot setup. Idempotent.
+  /// One-shot setup. Idempotent. Writes to the app's private external
+  /// storage dir (`/sdcard/Android/data/<pkg>/files/logs/`) so the log
+  /// is reachable from the system Files app on Android, and from a
+  /// `run-as` shell on debuggable builds.
   static Future<void> init() async {
     if (_initialized) return;
     _initialized = true;
     try {
-      final docs = await getApplicationSupportDirectory();
-      final logsDir = Directory(p.join(docs.path, 'logs'));
+      final base = '/sdcard/Android/data/com.crownpark.ymir_multiplatform/files';
+      final logsDir = Directory(p.join(base, 'logs'));
       if (!logsDir.existsSync()) await logsDir.create(recursive: true);
       _filePath = p.join(logsDir.path, 'ymir-multiplatform.log');
     } catch (e) {
