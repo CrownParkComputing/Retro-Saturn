@@ -76,7 +76,15 @@ class _YmirAppState extends State<YmirApp> {
             body: Center(child: CircularProgressIndicator()),
           );
         }
-        return EmulatorScreen(core: _core!);
+        // Smoke test: load a real Saturn BIOS + Sega Rally CHD from
+        // the app's external files dir (push to
+        // /sdcard/Android/data/com.crownpark.ymir_multiplatform/files/roms/
+        // via adb). Replace with library grid once it's wired up.
+        return EmulatorScreen(
+          core: _core!,
+          biosPath: '/sdcard/Android/data/com.crownpark.ymir_multiplatform/files/roms/saturn_bios.bin',
+          discPath: '/sdcard/Android/data/com.crownpark.ymir_multiplatform/files/roms/segarally.chd',
+        );
       }),
     );
   }

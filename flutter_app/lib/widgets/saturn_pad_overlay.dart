@@ -53,9 +53,9 @@ class _SaturnPadOverlayState extends State<SaturnPadOverlay> {
     if (!widget.visible) return const SizedBox.shrink();
     return LayoutBuilder(builder: (context, c) {
       return Stack(children: [
-        _draggableCluster(_dpad, const Size(120, 120), _buildDpad),
-        _draggableCluster(_face, const Size(150, 90), _buildFace),
-        _draggableCluster(_triggers, const Size(110, 60), _buildTriggers),
+        _draggableCluster(_dpad, const Size(80, 80), _buildDpad),
+        _draggableCluster(_face, const Size(220, 36), _buildFace),
+        _draggableCluster(_triggers, const Size(80, 36), _buildTriggers),
       ]);
     });
   }
@@ -90,50 +90,70 @@ class _SaturnPadOverlayState extends State<SaturnPadOverlay> {
   }
 
   Widget _buildDpad(Offset _) {
-    return Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-      _padBtn(YmirButton.up, Icons.arrow_drop_up),
-      _padBtn(YmirButton.left, Icons.arrow_left),
-      _padBtn(YmirButton.right, Icons.arrow_right),
-      _padBtn(YmirButton.down, Icons.arrow_drop_down),
-    ]);
+    return Padding(
+      padding: const EdgeInsets.all(2),
+      child: FittedBox(
+        fit: BoxFit.scaleDown,
+        child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+          _padBtn(YmirButton.up, Icons.arrow_drop_up, sz: 24),
+          _padBtn(YmirButton.left, Icons.arrow_left, sz: 24),
+          _padBtn(YmirButton.right, Icons.arrow_right, sz: 24),
+          _padBtn(YmirButton.down, Icons.arrow_drop_down, sz: 24),
+        ]),
+      ),
+    );
   }
 
   Widget _buildFace(Offset _) {
-    return Row(mainAxisAlignment: MainAxisAlignment.spaceEvenly, children: [
-      _padBtn(YmirButton.y, null, label: 'Y'),
-      _padBtn(YmirButton.b, null, label: 'B'),
-      _padBtn(YmirButton.a, null, label: 'A'),
-      _padBtn(YmirButton.c, null, label: 'C'),
-      _padBtn(YmirButton.x, null, label: 'X'),
-      _padBtn(YmirButton.z, null, label: 'Z'),
-      _padBtn(YmirButton.start, null, label: 'ST'),
-    ]);
+    return Padding(
+      padding: const EdgeInsets.all(2),
+      child: FittedBox(
+        fit: BoxFit.scaleDown,
+        child: Row(mainAxisAlignment: MainAxisAlignment.spaceEvenly, children: [
+          _padBtn(YmirButton.y, null, label: 'Y', sz: 12),
+          _padBtn(YmirButton.b, null, label: 'B', sz: 12),
+          _padBtn(YmirButton.a, null, label: 'A', sz: 12),
+          _padBtn(YmirButton.c, null, label: 'C', sz: 12),
+          _padBtn(YmirButton.x, null, label: 'X', sz: 12),
+          _padBtn(YmirButton.z, null, label: 'Z', sz: 12),
+          _padBtn(YmirButton.start, null, label: 'ST', sz: 12),
+        ]),
+      ),
+    );
   }
 
   Widget _buildTriggers(Offset _) {
-    return Row(mainAxisAlignment: MainAxisAlignment.spaceEvenly, children: [
-      _padBtn(YmirButton.l, null, label: 'L'),
-      _padBtn(YmirButton.r, null, label: 'R'),
-    ]);
+    return Padding(
+      padding: const EdgeInsets.all(2),
+      child: FittedBox(
+        fit: BoxFit.scaleDown,
+        child: Row(mainAxisAlignment: MainAxisAlignment.spaceEvenly, children: [
+          _padBtn(YmirButton.l, null, label: 'L', sz: 12),
+          _padBtn(YmirButton.r, null, label: 'R', sz: 12),
+        ]),
+      ),
+    );
   }
 
-  Widget _padBtn(YmirButton b, IconData? icon, {String? label}) {
+  Widget _padBtn(YmirButton b, IconData? icon,
+      {String? label, double sz = 20}) {
     final isDown = _pressed.contains(b.value);
     return Listener(
       onPointerDown: (_) => _press(b, true),
       onPointerUp:   (_) => _press(b, false),
       onPointerCancel: (_) => _press(b, false),
       child: Container(
-        margin: const EdgeInsets.all(4),
-        padding: const EdgeInsets.all(6),
+        margin: const EdgeInsets.all(1),
+        padding: const EdgeInsets.all(2),
         decoration: BoxDecoration(
-          color: isDown ? Colors.white24 : Colors.transparent,
+          color: isDown ? Colors.white24 : Colors.black26,
           shape: BoxShape.circle,
-          border: Border.all(color: Colors.white38),
+          border: Border.all(color: Colors.white54, width: 1),
         ),
         child: icon != null
-            ? Icon(icon, color: Colors.white, size: 24)
-            : Text(label!, style: const TextStyle(color: Colors.white, fontSize: 14)),
+            ? Icon(icon, color: Colors.white, size: sz)
+            : Text(label!,
+                style: TextStyle(color: Colors.white, fontSize: sz)),
       ),
     );
   }
