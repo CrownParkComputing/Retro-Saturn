@@ -14,6 +14,8 @@ import 'package:ymir_multiplatform/screens/setup_wizard_screen.dart';
 import 'package:ymir_multiplatform/screens/workbench_screen.dart';
 import 'package:ymir_multiplatform/services/app_prefs.dart';
 import 'package:ymir_multiplatform/services/backup_ram_service.dart';
+import 'package:ymir_multiplatform/services/smpc_state_service.dart';
+import 'package:ymir_multiplatform/services/smpc_state_service.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -82,6 +84,10 @@ class _YmirAppState extends State<YmirApp> with WidgetsBindingObserver {
       final bindings = YmirCoreBindings.load(libraryPath: libPath);
       final core = YmirCoreBindingsAdapter(bindings);
       core.create();
+
+      // On first launch write a default SMPC state file so the BIOS
+      // Set Clock + Set Language wizard skips even on first boot.
+      await SmpcStateService.ensureDefaults(_smpcStatePath);
 
       // Tell ymir-core where to read the SMPC persistent data file from.
       // MUST be called BEFORE LoadIPL so ymir-core reads it during boot
