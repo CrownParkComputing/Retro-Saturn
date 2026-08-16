@@ -568,11 +568,13 @@ YmirInstance *ymir_bridge_create(void) {
 
     /* audio backend — selected at compile time via #ifdef below */
 #if defined(__ANDROID__)
-    inst->audio.reset(ymir_audio_backend_android_create());
+    inst->audio.reset(ymir_audio_backend_android_create_with_bridge(inst.get()));
 #elif defined(__APPLE__)
     inst->audio.reset(ymir_audio_backend_ios_create());
 #else
-    inst->audio.reset(ymir_audio_backend_alsa_create());
+    /* Linux: pass the bridge handle so the writer thread can pull
+     * frames from the audio ring buffer. */
+    inst->audio.reset(ymir_audio_backend_alsa_create_with_bridge(inst.get()));
 #endif
     if (inst->audio && inst->audio->start) inst->audio->start(inst->audio->user);
 

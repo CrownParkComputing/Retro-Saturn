@@ -1,6 +1,5 @@
-// Widget smoke test: the root YmirApp reaches one of
-// {Failed to load, Loading, EmulatorScreen} without throwing.
-// Uses FakeYmirCore so no libymircore.so is needed.
+// Widget smoke test: the root YmirApp builds without throwing.
+// Uses FakeYmirCore so no libymircore.so is needed in the test env.
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';

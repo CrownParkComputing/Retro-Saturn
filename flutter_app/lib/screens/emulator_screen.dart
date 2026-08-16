@@ -1,12 +1,16 @@
-// emulator_screen.dart — Emulator screen. Loads BIOS + disc on init,
-// shows the framebuffer, mounts the on-screen Saturn pad, the Virtua
-// Gun overlay (when port 1 peripheral == gun), and a settings drawer
-// with the peripheral selector.
+// emulator_screen.dart — Game launcher. Loads BIOS + disc from the
+// library grid tap, restores NVRAM (Saturn backup RAM), mounts the
+// gamepad service + Virtua Gun overlay when appropriate, and
+// auto-saves NVRAM every 30 seconds while playing.
+
+import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:ymir_multiplatform/data/media_entry.dart';
 import 'package:ymir_multiplatform/data/peripheral_type.dart';
 import 'package:ymir_multiplatform/ffi/ymir_bindings.dart';
 import 'package:ymir_multiplatform/ffi/ymir_core.dart';
+import 'package:ymir_multiplatform/services/backup_ram_service.dart';
 import 'package:ymir_multiplatform/services/gamepad_service.dart';
 import 'package:ymir_multiplatform/widgets/framebuffer_view.dart';
 import 'package:ymir_multiplatform/widgets/peripheral_selector.dart';
@@ -15,13 +19,15 @@ import 'package:ymir_multiplatform/widgets/virtua_gun_overlay.dart';
 class EmulatorScreen extends StatefulWidget {
   final YmirCore core;
   final String? biosPath;
-  final String? discPath;
+  final String? gamesFolder;
+  final MediaEntry? entry;
 
   const EmulatorScreen({
     super.key,
     required this.core,
     this.biosPath,
-    this.discPath,
+    this.gamesFolder,
+    this.entry,
   });
 
   @override
@@ -30,8 +36,9 @@ class EmulatorScreen extends StatefulWidget {
 
 class _EmulatorScreenState extends State<EmulatorScreen> {
   GamepadService? _gamepad;
-  bool _padVisible = false; // hidden by default — gamepad is the input
+  bool _padVisible = false;
   String _lastResult = 'starting…';
+  String _currentDisc = '';
 
   @override
   void initState() {
@@ -42,21 +49,42 @@ class _EmulatorScreenState extends State<EmulatorScreen> {
 
   @override
   void dispose() {
+    // Persist NVRAM + SMPC state on exit
+    if (_currentDisc.isNotEmpty) {
+      BackupRamService.saveFrom(widget.core, _currentDisc);
+    }
+    BackupRamService.stopAutoSave();
+    widget.core.saveSmpcState('/sdcard/Android/data/com.crownpark.ymir_multiplatform/files/roms/smpc_state.bin');
     _gamepad?.dispose();
     super.dispose();
   }
 
   Future<void> _loadMedia() async {
-    setState(() => _lastResult = 'loading BIOS…');
-    if (widget.biosPath != null) {
-      final rc = widget.core.loadBios(widget.biosPath!);
-      setState(() => _lastResult = 'loadBios rc=$rc (${widget.biosPath})');
+    final biosPath = widget.biosPath;
+    final entry = widget.entry;
+
+    if (biosPath != null && File(biosPath).existsSync()) {
+      setState(() => _lastResult = 'loading BIOS…');
+      final rc = widget.core.loadBios(biosPath);
+      setState(() => _lastResult = 'BIOS rc=$rc');
+    } else {
+      setState(() => _lastResult = 'no BIOS (run setup)');
     }
-    setState(() => _lastResult = 'loading disc…');
-    if (widget.discPath != null) {
-      final rc = widget.core.loadDisc(widget.discPath!);
-      setState(() => _lastResult = 'loadDisc rc=$rc (${widget.discPath})');
+
+    if (entry != null && File(entry.path).existsSync()) {
+      _currentDisc = entry.path;
+      setState(() => _lastResult = 'loading disc…');
+      final rc = widget.core.loadDisc(entry.path);
+      setState(() => _lastResult = 'disc rc=$rc (${entry.displayName})');
+
+      // Restore NVRAM (Saturn backup RAM)
+      final loaded = await BackupRamService.loadInto(widget.core, entry.path);
+      debugPrint('NVRAM load: $loaded');
+
+      // Start auto-save every 30s while playing
+      BackupRamService.startAutoSave(widget.core, entry.path);
     }
+
     setState(() => _lastResult = 'running (${widget.core.status})');
   }
 
@@ -70,12 +98,9 @@ class _EmulatorScreenState extends State<EmulatorScreen> {
       body: SafeArea(
         child: Stack(children: [
           FramebufferView(core: widget.core, showFps: true),
-          if (showGun)
-            VirtuaGunOverlay(core: widget.core, port: 1),
+          if (showGun) VirtuaGunOverlay(core: widget.core, port: 1),
           Positioned(
-            top: 4,
-            left: 4,
-            right: 60,
+            top: 4, left: 4, right: 60,
             child: Container(
               padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
               color: Colors.black54,
@@ -87,17 +112,8 @@ class _EmulatorScreenState extends State<EmulatorScreen> {
             ),
           ),
           Positioned(
-            top: 4,
-            right: 4,
+            top: 4, right: 4,
             child: Row(mainAxisSize: MainAxisSize.min, children: [
-              IconButton(
-                tooltip: 'Toggle pad',
-                padding: EdgeInsets.zero,
-                constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
-                icon: Icon(_padVisible ? Icons.gamepad : Icons.gamepad_outlined,
-                    color: Colors.white, size: 20),
-                onPressed: () => setState(() => _padVisible = !_padVisible),
-              ),
               Builder(
                 builder: (ctx) => IconButton(
                   tooltip: 'Settings',
@@ -131,6 +147,7 @@ class _EmulatorScreenState extends State<EmulatorScreen> {
           Text('Muted: ${widget.core.audioMuted}'),
           Text('Port 1: ${widget.core.getPeripheralType(1).displayName}'),
           Text('Port 2: ${widget.core.getPeripheralType(2).displayName}'),
+          if (_currentDisc.isNotEmpty) Text('NVRAM: auto-save every 30s'),
         ]),
       ),
     );

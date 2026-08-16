@@ -40,7 +40,9 @@ typedef struct YmirAudioBackend {
  *   ymir_audio_backend_stub_create       (headless tests)
  */
 YmirAudioBackend *ymir_audio_backend_alsa_create(void);
+YmirAudioBackend *ymir_audio_backend_alsa_create_with_bridge(void *bridge);
 YmirAudioBackend *ymir_audio_backend_android_create(void);
+YmirAudioBackend *ymir_audio_backend_android_create_with_bridge(void *bridge);
 YmirAudioBackend *ymir_audio_backend_ios_create(void);
 YmirAudioBackend *ymir_audio_backend_stub_create(void);
 

@@ -1,14 +1,24 @@
-// main.dart — minimal app entry that loads libymircore.{so,dylib},
-// creates the YmirCore, and shows the emulator screen. The full
-// library + IGDB + bezel + gamepad UI lands in Phase 3.
+// main.dart — Ymir Multiplatform app entry. Loads libymircore.{so,dylib},
+// creates the YmirCore, restores SMPC state + backup RAM, then routes
+// to SetupWizardScreen or WorkbenchScreen based on whether setup is
+// complete. Mirrors ViceMultiplatform's setup pattern.
+
+import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:ymir_multiplatform/ffi/ymir_bindings.dart';
 import 'package:ymir_multiplatform/ffi/ymir_core.dart';
 import 'package:ymir_multiplatform/ffi/ymir_native_paths.dart';
-import 'package:ymir_multiplatform/screens/emulator_screen.dart';
+import 'package:ymir_multiplatform/screens/setup_wizard_screen.dart';
+import 'package:ymir_multiplatform/screens/workbench_screen.dart';
+import 'package:ymir_multiplatform/services/app_prefs.dart';
+import 'package:ymir_multiplatform/services/backup_ram_service.dart';
 
-void main() {
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await AppPrefs.load();
+  await BackupRamService.ensureInit();
   runApp(const YmirApp());
 }
 
@@ -19,73 +29,130 @@ class YmirApp extends StatefulWidget {
   State<YmirApp> createState() => _YmirAppState();
 }
 
-class _YmirAppState extends State<YmirApp> {
+class _YmirAppState extends State<YmirApp> with WidgetsBindingObserver {
   YmirCore? _core;
-  String? _error;
+  String? _loadError;
+  bool? _setupCompleted;
+
+  /// Whether the emulator core was paused before backgrounding, so
+  /// coming back doesn't un-pause something the user paused deliberately.
+  bool _corePausedBeforeBackground = false;
+
+  /// Saturn BIOS SMPC persistent state — restored on launch to skip the
+  /// Set Clock / Set Language wizard when the user has completed it.
+  static const _smpcStatePath =
+      '/sdcard/Android/data/com.crownpark.ymir_multiplatform/files/roms/smpc_state.bin';
 
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) => _initCore());
+    WidgetsBinding.instance.addObserver(this);
+    _loadCore();
+    _checkSetup();
   }
 
-  void _initCore() {
+  @override
+  void dispose() {
+    final core = _core;
+    if (core != null) {
+      core.saveSmpcState(_smpcStatePath);
+      core.dispose();
+    }
+    BackupRamService.stopAutoSave();
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    super.didChangeAppLifecycleState(state);
+    final foreground = state == AppLifecycleState.resumed;
+    final core = _core;
+    if (!foreground) {
+      _corePausedBeforeBackground = core?.presentationPaused ?? false;
+      if (!_corePausedBeforeBackground) core?.setPresentationPaused(true);
+    } else {
+      if (!_corePausedBeforeBackground) core?.setPresentationPaused(false);
+    }
+  }
+
+  Future<void> _loadCore() async {
     try {
       final libPath = YmirNativePaths.resolveLibrary();
       final bindings = YmirCoreBindings.load(libraryPath: libPath);
       final core = YmirCoreBindingsAdapter(bindings);
       core.create();
-      setState(() {
-        _core = core;
-      });
+
+      // Restore SMPC state from the previous launch if available
+      // (skips the Set Clock / Set Language wizard on subsequent boots).
+      if (File(_smpcStatePath).existsSync()) {
+        core.loadSmpcState(_smpcStatePath);
+      }
+      if (!mounted) return;
+      setState(() => _core = core);
     } catch (e) {
-      setState(() {
-        _error = 'Failed to load libymircore: $e';
-      });
+      if (!mounted) return;
+      setState(() => _loadError = e.toString());
     }
   }
 
-  @override
-  void dispose() {
-    _core?.dispose();
-    super.dispose();
+  Future<void> _checkSetup() async {
+    final completed = await AppPrefs.isSetupCompleted();
+    if (!mounted) return;
+    setState(() => _setupCompleted = completed);
   }
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Ymir Multiplatform',
+      title: 'Ymir — Sega Saturn',
+      debugShowCheckedModeBanner: false,
       theme: ThemeData.dark(useMaterial3: true),
-      home: Builder(builder: (context) {
-        if (_error != null) {
-          return Scaffold(
-            backgroundColor: Colors.black,
-            body: Center(
-              child: Padding(
-                padding: const EdgeInsets.all(24),
-                child: Text(_error!,
-                    style: const TextStyle(color: Colors.redAccent),
-                    textAlign: TextAlign.center),
-              ),
-            ),
-          );
-        }
-        if (_core == null) {
-          return const Scaffold(
-            backgroundColor: Colors.black,
-            body: Center(child: CircularProgressIndicator()),
-          );
-        }
-        // Smoke test: load a real Saturn BIOS + Sega Rally CHD from
-        // the app's external files dir (push to
-        // /sdcard/Android/data/com.crownpark.ymir_multiplatform/files/roms/
-        // via adb). Replace with library grid once it's wired up.
-        return EmulatorScreen(
-          core: _core!,
-          biosPath: '/sdcard/Android/data/com.crownpark.ymir_multiplatform/files/roms/saturn_bios.bin',
-          discPath: '/sdcard/Android/data/com.crownpark.ymir_multiplatform/files/roms/segarally.chd',
-        );
-      }),
+      home: _loadError != null
+          ? _ErrorScreen(message: _loadError!)
+          : (_core == null || _setupCompleted == null)
+              ? const _LoadingScreen()
+              : (_setupCompleted == false
+                  ? SetupWizardScreen(
+                      onComplete: () => setState(() => _setupCompleted = true),
+                    )
+                  : WorkbenchScreen(
+                      core: _core!,
+                      onRerunSetup: () =>
+                          setState(() => _setupCompleted = false),
+                    )),
+    );
+  }
+}
+
+class _LoadingScreen extends StatelessWidget {
+  const _LoadingScreen();
+  @override
+  Widget build(BuildContext context) {
+    return const Scaffold(
+      backgroundColor: Color(0xFF050607),
+      body: Center(child: CircularProgressIndicator()),
+    );
+  }
+}
+
+class _ErrorScreen extends StatelessWidget {
+  final String message;
+  const _ErrorScreen({required this.message});
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: const Color(0xFF050607),
+      body: Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Text(
+            'Failed to load libymircore:\n$message',
+            style: const TextStyle(color: Colors.redAccent),
+            textAlign: TextAlign.center,
+          ),
+        ),
+      ),
     );
   }
 }
