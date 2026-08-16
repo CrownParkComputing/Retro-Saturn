@@ -101,6 +101,14 @@ static int32_t aaudio_start(void *user) {
         return -1;
     }
 
+    /* Force a fixed 1024-frame buffer so each callback asks for a
+     * predictable, modest chunk. AAudio default is auto-sized around
+     * 1700+ frames (~40 ms) which is way larger than the emulator's
+     * 60 Hz cadence (~735 frames / 16.6 ms), so the producer always
+     * underruns. AAudioStream_setBufferSizeInFrames is best-effort —
+     * the system may clamp to a min/max. */
+    AAudioStream_setBufferSizeInFrames(st->stream, 1024);
+
     rc = AAudioStream_requestStart(st->stream);
     if (rc != AAUDIO_OK) {
         LOGE("AAudioStream_requestStart failed: %d", rc);

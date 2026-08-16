@@ -816,35 +816,43 @@ int32_t ymir_bridge_swap_state(YmirInstance *inst, const char *path) {
 int32_t ymir_bridge_pull_audio(void *inst_v, int16_t *out, int32_t max_frames) {
     auto *inst = (YmirInstance *)inst_v;
     if (!inst || !out || max_frames <= 0) return 0;
-    int32_t cap = inst->ring.capacity;
-    if (cap == 0) return 0;
-    int64_t r = inst->ring.readFrame.load(std::memory_order_relaxed);
-    int64_t w = inst->ring.writeFrame.load(std::memory_order_acquire);
-    int64_t queued = w - r;
-    if (queued <= 0) return 0;
-    int32_t n = (int32_t)std::min<int64_t>(queued, max_frames);
-    /* underrun guard: only drain if prebuffer filled (80 ms = ~3528 frames) */
-    if (queued < (kAudioSampleRate * kAudioPrebufferMs / 1000)) {
-        /* not enough prebuffered — return silence for one block, but
-         * still advance r so we eventually catch up */
+    /* Loop the ring buffer transfer until we've filled `max_frames` or
+     * the ring runs dry. The earlier "memset remainder with silence"
+     * approach in the consumer produced audible pops because half of
+     * every AAudio callback period was repeated silence. */
+    int32_t total = 0;
+    while (total < max_frames) {
+        int32_t cap = inst->ring.capacity;
+        if (cap == 0) break;
+        int64_t r = inst->ring.readFrame.load(std::memory_order_relaxed);
+        int64_t w = inst->ring.writeFrame.load(std::memory_order_acquire);
+        int64_t queued = w - r;
+        if (queued <= 0) break;
+        int32_t want = max_frames - total;
+        int32_t n = (int32_t)std::min<int64_t>(queued, want);
+        std::lock_guard<std::mutex> lk(inst->ring.mut);
+        int64_t start = r % cap;
+        int64_t end = start + n;
+        if (end <= cap) {
+            std::memcpy(out + total * 2,
+                        inst->ring.buf.data() + start * 2,
+                        n * 2 * sizeof(int16_t));
+        } else {
+            int32_t first = (int32_t)(cap - start);
+            std::memcpy(out + total * 2,
+                        inst->ring.buf.data() + start * 2,
+                        first * 2 * sizeof(int16_t));
+            std::memcpy(out + (total + first) * 2,
+                        inst->ring.buf.data(),
+                        (n - first) * 2 * sizeof(int16_t));
+        }
+        inst->ring.readFrame.store(r + n, std::memory_order_release);
+        total += n;
     }
-    std::lock_guard<std::mutex> lk(inst->ring.mut);
-    int64_t start = r % cap;
-    int64_t end   = start + n;
-    if (end <= cap) {
-        std::memcpy(out, inst->ring.buf.data() + start * 2, n * 2 * sizeof(int16_t));
-    } else {
-        int64_t first = cap - start;
-        std::memcpy(out, inst->ring.buf.data() + start * 2,
-                    first * 2 * sizeof(int16_t));
-        std::memcpy(out + first * 2, inst->ring.buf.data(),
-                    (n - first) * 2 * sizeof(int16_t));
-    }
-    inst->ring.readFrame.store(r + n, std::memory_order_release);
-    /* decay peak slowly so the UI meter doesn't stick */
+    /* Decay peak slowly so the UI meter doesn't stick */
     int32_t cur = inst->ring.peakLevel.load(std::memory_order_relaxed);
     if (cur > 0) inst->ring.peakLevel.store(cur - 1, std::memory_order_relaxed);
-    return n;
+    return total;
 }
 
 int32_t ymir_bridge_get_audio_muted_flag(YmirInstance *inst) {
