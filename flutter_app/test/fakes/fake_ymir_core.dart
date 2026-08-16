@@ -109,6 +109,10 @@ class FakeYmirCore extends ChangeNotifier implements YmirCore {
     calls.add('gun:$port:$x,$y:$trigger,$start');
   }
   @override
+  void setVirtuaGunFbSize(int width, int height) {
+    calls.add('gunFbSize:$width,$height');
+  }
+  @override
   void setAnalogAxis(int port, int lx, int ly, int rx, int ry) {
     calls.add('analog:$port:$lx,$ly,$rx,$ry');
   }

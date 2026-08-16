@@ -202,6 +202,9 @@ class YmirCoreBindings {
   late final _swapState = _lib.lookupFunction<_IntHandleStrNative, _IntHandleStrDart>(
       'ymir_bridge_swap_state');
 
+  late final _setVirtuaGunFbSize = _lib.lookupFunction<_VoidHandleIntIntNative, _VoidHandleIntIntDart>(
+      'ymir_bridge_set_virtua_gun_fb_size');
+
   // ============================================================
   //  Public Dart wrappers
   // ============================================================
@@ -354,6 +357,10 @@ class YmirCoreBindings {
     } finally {
       calloc.free(cstr);
     }
+  }
+
+  void setVirtuaGunFbSize(ffi.Pointer<ffi.Uint8> p, int w, int h) {
+    _setVirtuaGunFbSize(p, w, h);
   }
 }
 
