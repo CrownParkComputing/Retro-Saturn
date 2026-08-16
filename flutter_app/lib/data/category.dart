@@ -6,7 +6,7 @@ enum WorkbenchCategory {
   games('🎮', 'Games'),
   paths('📂', 'Paths'),
   input('🕹️', 'Input'),
-  history('📜', 'History'),
+  history('📜', 'Memories'),
   about('ℹ️', 'About');
 
   final String icon;

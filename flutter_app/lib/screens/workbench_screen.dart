@@ -68,7 +68,6 @@ class _WorkbenchScreenState extends State<WorkbenchScreen> {
         return LibraryGrid(
           folderPath: _gamesFolder,
           onLaunch: (entry) async {
-            await HistoryService.record(entry.path, entry.displayName);
             if (!mounted) return;
             await Navigator.of(context).push(MaterialPageRoute(
               builder: (_) => EmulatorScreen(
