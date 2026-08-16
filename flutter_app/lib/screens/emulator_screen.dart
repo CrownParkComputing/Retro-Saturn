@@ -100,27 +100,30 @@ class _EmulatorScreenState extends State<EmulatorScreen> {
           FramebufferView(core: widget.core, showFps: true),
           if (showGun) VirtuaGunOverlay(core: widget.core, port: 1),
           Positioned(
-            top: 4, left: 4, right: 60,
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-              color: Colors.black54,
-              child: Text(
-                widget.core.status,
-                style: const TextStyle(color: Colors.white, fontSize: 9),
-                overflow: TextOverflow.ellipsis,
+            top: 4, left: 4, right: 4,
+            child: Row(children: [
+              Flexible(
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                  color: Colors.black54,
+                  child: Text(
+                    widget.core.status,
+                    style: const TextStyle(color: Colors.white, fontSize: 9),
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
               ),
-            ),
-          ),
-          Positioned(
-            top: 4, right: 4,
-            child: Row(mainAxisSize: MainAxisSize.min, children: [
+              const SizedBox(width: 4),
               Builder(
-                builder: (ctx) => IconButton(
-                  tooltip: 'Settings',
-                  padding: EdgeInsets.zero,
-                  constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
-                  icon: const Icon(Icons.settings, color: Colors.white, size: 20),
-                  onPressed: () => Scaffold.of(ctx).openDrawer(),
+                builder: (ctx) => SizedBox(
+                  width: 36, height: 36,
+                  child: IconButton(
+                    tooltip: 'Settings',
+                    padding: EdgeInsets.zero,
+                    iconSize: 20,
+                    icon: const Icon(Icons.settings, color: Colors.white),
+                    onPressed: () => Scaffold.of(ctx).openDrawer(),
+                  ),
                 ),
               ),
             ]),
