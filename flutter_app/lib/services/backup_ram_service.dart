@@ -78,12 +78,20 @@ class BackupRamService {
   static String? _autoSavePath;
 
   static void startAutoSave(YmirCore core, String discPath,
-      {Duration interval = const Duration(seconds: 30)}) {
+      {Duration interval = const Duration(seconds: 60)}) {
     _autoSavePath = discPath;
     _autoSaveTimer?.cancel();
     _autoSaveTimer = Timer.periodic(interval, (_) async {
       if (_autoSavePath != null) {
-        await saveFrom(core, _autoSavePath!);
+        // Errors are swallowed — in-game BIOS operations like
+        // 'Erase backup data' briefly clear the NVRAM; auto-save
+        // during that transient state could otherwise throw. The save
+        // is a 'best effort' snapshot, not a critical write.
+        try {
+          await saveFrom(core, _autoSavePath!);
+        } catch (_) {
+          // ignore — next tick will retry
+        }
       }
     });
   }

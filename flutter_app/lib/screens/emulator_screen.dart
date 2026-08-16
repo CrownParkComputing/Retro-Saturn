@@ -49,12 +49,19 @@ class _EmulatorScreenState extends State<EmulatorScreen> {
 
   @override
   void dispose() {
-    // Persist NVRAM + SMPC state on exit
+    // Persist NVRAM + SMPC state on exit. Errors are swallowed — if
+    // the path is gone (app uninstalled mid-launch) or the NVRAM is
+    // empty (user erased it via the BIOS), we don't want dispose()
+    // itself to crash.
     if (_currentDisc.isNotEmpty) {
-      BackupRamService.saveFrom(widget.core, _currentDisc);
+      try {
+        BackupRamService.saveFrom(widget.core, _currentDisc);
+      } catch (_) {}
     }
     BackupRamService.stopAutoSave();
-    widget.core.saveSmpcState('/sdcard/Android/data/com.crownpark.ymir_multiplatform/files/roms/smpc_state.bin');
+    try {
+      widget.core.saveSmpcState('/sdcard/Android/data/com.crownpark.ymir_multiplatform/files/roms/smpc_state.bin');
+    } catch (_) {}
     _gamepad?.dispose();
     super.dispose();
   }
@@ -77,11 +84,18 @@ class _EmulatorScreenState extends State<EmulatorScreen> {
       final rc = widget.core.loadDisc(entry.path);
       setState(() => _lastResult = 'disc rc=$rc (${entry.displayName})');
 
-      // Restore NVRAM (Saturn backup RAM)
-      final loaded = await BackupRamService.loadInto(widget.core, entry.path);
-      debugPrint('NVRAM load: $loaded');
+      // Restore NVRAM (Saturn backup RAM). Wrapped — a missing or
+      // corrupt save file is fine (returns false), but a hard error
+      // here would crash the whole screen.
+      try {
+        final loaded = await BackupRamService.loadInto(widget.core, entry.path);
+        debugPrint('NVRAM load: $loaded');
+      } catch (_) {
+        // ignore — proceed without NVRAM
+      }
 
-      // Start auto-save every 30s while playing
+      // Start auto-save every 60s while playing (longer interval to
+      // avoid racing with in-game BIOS operations like 'Erase backup').
       BackupRamService.startAutoSave(widget.core, entry.path);
     }
 
