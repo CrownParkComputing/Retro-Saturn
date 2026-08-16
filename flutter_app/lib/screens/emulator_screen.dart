@@ -38,6 +38,7 @@ class EmulatorScreen extends StatefulWidget {
 class _EmulatorScreenState extends State<EmulatorScreen> {
   GamepadService? _gamepad;
   bool _padVisible = false;
+  bool _paused = false;
   String _lastResult = 'starting…';
   String _currentDisc = '';
 
@@ -136,18 +137,42 @@ class _EmulatorScreenState extends State<EmulatorScreen> {
                   ),
                 ),
               ),
+              // In-game icons. Order + icons match ViceMultiplatform:
+              // pad toggle, keyboard / settings, pause, close.
               const SizedBox(width: 4),
+              _InGameIcon(
+                tooltip: _padVisible
+                    ? 'Hide on-screen pad'
+                    : 'Show on-screen pad',
+                icon: _padVisible
+                    ? Icons.gamepad
+                    : Icons.gamepad_outlined,
+                onPressed: () => setState(() => _padVisible = !_padVisible),
+              ),
               Builder(
-                builder: (ctx) => SizedBox(
-                  width: 36, height: 36,
-                  child: IconButton(
-                    tooltip: 'Settings',
-                    padding: EdgeInsets.zero,
-                    iconSize: 20,
-                    icon: const Icon(Icons.settings, color: Colors.white),
-                    onPressed: () => Scaffold.of(ctx).openDrawer(),
-                  ),
+                builder: (ctx) => _InGameIcon(
+                  tooltip: 'Settings',
+                  icon: Icons.settings,
+                  onPressed: () => Scaffold.of(ctx).openDrawer(),
                 ),
+              ),
+              _InGameIcon(
+                tooltip: _paused ? 'Resume' : 'Pause',
+                icon: _paused ? Icons.play_arrow : Icons.pause,
+                onPressed: () {
+                  setState(() => _paused = !_paused);
+                  widget.core.setPresentationPaused(_paused);
+                },
+              ),
+              _InGameIcon(
+                tooltip: 'Reset',
+                icon: Icons.refresh,
+                onPressed: () => widget.core.reset(hard: false),
+              ),
+              _InGameIcon(
+                tooltip: 'Close game',
+                icon: Icons.close,
+                onPressed: () => Navigator.of(context).pop(),
               ),
             ]),
           ),
@@ -175,6 +200,36 @@ class _EmulatorScreenState extends State<EmulatorScreen> {
           Text('Port 2: ${widget.core.getPeripheralType(2).displayName}'),
           if (_currentDisc.isNotEmpty) Text('NVRAM: auto-save every 30s'),
         ]),
+      ),
+    );
+  }
+}
+
+/// One Saturn pad overlay button + icon row, matching the in-game
+/// icon strip ViceMultiplatform has at the top-right of the
+/// emulator screen (pad / keyboard / pause / close).
+class _InGameIcon extends StatelessWidget {
+  final String tooltip;
+  final IconData icon;
+  final VoidCallback onPressed;
+  const _InGameIcon({
+    required this.tooltip,
+    required this.icon,
+    required this.onPressed,
+  });
+  @override
+  Widget build(BuildContext context) {
+    return Tooltip(
+      message: tooltip,
+      child: SizedBox(
+        width: 32, height: 32,
+        child: IconButton(
+          padding: EdgeInsets.zero,
+          iconSize: 18,
+          color: Colors.white,
+          icon: Icon(icon),
+          onPressed: onPressed,
+        ),
       ),
     );
   }
