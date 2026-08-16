@@ -18,9 +18,9 @@ import '../services/bezel_index.dart';
 
 /// Default size of a tile. The grid screen derives column count from
 /// its actual width; this constant sets the height of one tile.
-const double kMediaCardWidth = 156;
-const double kMediaCardHeight = 174;
-const double kMediaCardCoverHeight = 132;
+const double kMediaCardWidth = 140;
+const double kMediaCardHeight = 178;
+const double kMediaCardCoverHeight = 124;
 
 /// One tile in the library grid.
 class MediaCard extends StatefulWidget {
@@ -130,15 +130,18 @@ class _MediaCardState extends State<MediaCard> {
                   ),
                 ),
                 Padding(
-                  padding: const EdgeInsets.fromLTRB(6, 6, 6, 2),
-                  child: Text(
-                    _titleLabel(entry),
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 11,
-                        height: 1.2),
+                  padding: const EdgeInsets.fromLTRB(6, 4, 6, 2),
+                  child: SizedBox(
+                    height: 28,
+                    child: Text(
+                      _titleLabel(entry),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 10,
+                          height: 1.2),
+                    ),
                   ),
                 ),
                 Padding(

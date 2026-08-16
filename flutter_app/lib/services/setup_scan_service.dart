@@ -102,7 +102,7 @@ class SetupScanService {
   static List<MediaEntry> _dedup(List<MediaEntry> games) {
     final byKey = <String, MediaEntry>{};
     for (final g in games) {
-      final key = g.bezelKey.isEmpty ? g.path : g.bezelKey;
+      final key = dedupBaseName(g.baseName);
       final existing = byKey[key];
       if (existing == null) {
         byKey[key] = g;

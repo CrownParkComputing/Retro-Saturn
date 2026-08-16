@@ -37,18 +37,80 @@ class LibraryScanResult {
 
   static const empty = LibraryScanResult(entries: [], unreadableCount: 0);
 
-  /// Deduplicated by path+format: useful when the user has the same disc
-  /// under multiple parent folders (e.g. an old unsorted root plus a new
-  /// Per-Publisher root).
+  /// Deduplicated by aggressive baseName key (see [dedupBaseName] below).
+  /// Useful when the user has the same disc under multiple parent folders
+  /// (e.g. an old unsorted root plus a new Per-Publisher root), or with
+  /// near-duplicate names like `Alien Trilogy (US).chd` vs
+  /// `Alien_Trilogy__US_.chd` (which are byte-identical copies under
+  /// different renamings). The dedup key strips bracketed region tags
+  /// (`(US)`, `[v1.1]`) AND trailing underscore-tags (`_US_`, `_USA_`,
+  /// `_rev1`, `_v1.0`) so both rename styles land on the same key.
+  /// Ties are broken by file size (real CHDs beat save-state `.chd`).
   factory LibraryScanResult.dedup(LibraryScanResult raw) {
-    final seen = <MediaEntry>{};
-    for (final entry in raw.entries) {
-      seen.add(entry);
+    final byKey = <String, MediaEntry>{};
+    for (final g in raw.entries) {
+      final key = dedupBaseName(g.baseName);
+      final existing = byKey[key];
+      if (existing == null) {
+        byKey[key] = g;
+      } else {
+        try {
+          final aSz = File(existing.path).lengthSync();
+          final bSz = File(g.path).lengthSync();
+          if (bSz > aSz) byKey[key] = g;
+        } catch (_) {
+          // can't stat, keep whichever we saw first
+        }
+      }
     }
-    final list = seen.toList()
+    final list = byKey.values.toList()
       ..sort((a, b) => a.baseName.toLowerCase().compareTo(b.baseName.toLowerCase()));
     return LibraryScanResult(entries: list, unreadableCount: raw.unreadableCount);
   }
+}
+
+/// Saturn disc formats the core can mount. The scanner returns entries
+/// Aggressive normalize used by both SetupScanService and LibraryGrid
+/// to dedup files like `Alien Trilogy (US).chd` vs
+/// `Alien_Trilogy__US_.chd` (byte-identical copies under different
+/// rename styles). Strips bracketed tags `(US)`, `[v1.1]`, `{hack}`,
+/// normalizes separators to spaces, then drops the LAST word if it
+/// looks like a region/revision tag (1–6 chars, all letters/digits).
+/// Examples:
+///   "Alien Trilogy (US)"       → "alien trilogy"
+///   "Alien_Trilogy__US_"       → "alien trilogy"
+///   "Battle Arena Toshinden Remix (US)" → "battle arena toshinden remix"
+///   "Battle_Arena_Toshinden_Remix__US_" → "battle arena toshinden remix"
+String dedupBaseName(String base) {
+  var s = base.toLowerCase();
+  // Strip bracketed tags (any inner content).
+  s = s.replaceAll(RegExp(r'\([^)]*\)|\[[^\]]*\]|\{[^}]*\}'), ' ');
+  // Strip every underscore and dash — both become spaces.
+  s = s.replaceAll(RegExp(r'[_\-]+'), ' ');
+  // Collapse multiple whitespace.
+  s = s.replaceAll(RegExp(r'\s+'), ' ').trim();
+  // Drop a trailing single-word tag (1-6 chars, all letters/digits).
+  // Matches: us usa eu europe jp japan world reva rev1 v1.0 v1 disc1 etc.
+  final trailing = RegExp(r'\s+[a-z0-9]{1,6}$');
+  if (trailing.hasMatch(s)) {
+    final m = trailing.firstMatch(s)!;
+    final candidate = m.group(0)!.trim();
+    // Only strip if it looks like a tag, not a real word. Heuristic:
+    // a real-word trailing token is part of the game title; a tag is
+    // usually short uppercase region/revision. Use a known tag list.
+    const tags = <String>{
+      'us', 'usa', 'eu', 'europe', 'jp', 'japan', 'world', 'en',
+      'uk', 'de', 'fr', 'es', 'it', 'pt', 'kr', 'cn',
+      'rev1', 'rev2', 'rev3', 'rev4', 'rev a', 'rev b',
+      'v1', 'v2', 'v3', 'v1.0', 'v1.1', 'v2.0',
+      'disc1', 'disc2', 'disc3', 'cd1', 'cd2',
+      'proto', 'demo', 'beta', 'alpha',
+    };
+    if (tags.contains(candidate)) {
+      s = s.substring(0, m.start).trimRight();
+    }
+  }
+  return s.isEmpty ? base : s;
 }
 
 /// Saturn disc formats the core can mount. The scanner returns entries

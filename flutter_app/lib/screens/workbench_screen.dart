@@ -1,7 +1,5 @@
 // workbench_screen.dart — Main hub. Sidebar nav + content panel.
-// Mirrors ViceMultiplatform's WorkbenchScreen: 🚀/🎮/📂/🕹️/📜/ℹ️
-// categories on the left, content (library grid, settings, etc.) on
-// the right.
+// Compact: small sidebar, small appbar, tight padding.
 
 import 'package:flutter/material.dart';
 import 'package:ymir_multiplatform/data/category.dart';
@@ -63,8 +61,9 @@ class _WorkbenchScreenState extends State<WorkbenchScreen> {
     switch (_category) {
       case WorkbenchCategory.games:
         if (_gamesFolder.isEmpty) {
-          return const Center(child: Text('Pick a games folder in 📂 Paths',
-              style: TextStyle(color: Colors.white54)));
+          return const Center(
+              child: Text('Pick a games folder in 📂 Paths',
+                  style: TextStyle(color: Colors.white54)));
         }
         return LibraryGrid(
           folderPath: _gamesFolder,
@@ -96,76 +95,134 @@ class _WorkbenchScreenState extends State<WorkbenchScreen> {
     final canLaunch = _biosPath.isNotEmpty && _gamesFolder.isNotEmpty;
     return Scaffold(
       backgroundColor: const Color(0xFF050607),
-      appBar: AppBar(
-        title: Text('Ymir — Sega Saturn'),
-        actions: [
-          IconButton(
-            tooltip: 'Rerun setup',
-            icon: const Icon(Icons.refresh),
-            onPressed: () => Navigator.of(context).push(MaterialPageRoute(
-              builder: (_) => SetupWizardScreen(onComplete: () {
-                _loadPaths();
-                Navigator.of(context).pop();
-              }),
-            )),
-          ),
-        ],
-      ),
       body: !_pathsLoaded
           ? const Center(child: CircularProgressIndicator())
           : Row(children: [
               Container(
-                width: 220,
+                width: 180,
                 color: const Color(0xFF101113),
-                child: ListView(padding: const EdgeInsets.all(4), children: [
+                child: ListView(padding: const EdgeInsets.all(2), children: [
                   for (final cat in WorkbenchCategory.values)
-                    ListTile(
-                      leading: Text(cat.icon, style: const TextStyle(fontSize: 18)),
-                      title: Text(cat.title),
+                    _SidebarItem(
+                      icon: cat.icon,
+                      title: cat.title,
                       selected: _category == cat,
                       onTap: () => setState(() => _category = cat),
-                      dense: true,
                     ),
-                  const Divider(),
+                  const SizedBox(height: 4),
+                  const Divider(color: Color(0xFF1A1F2C), height: 1),
                   Padding(
                     padding: const EdgeInsets.all(8),
-                    child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                      const Text('Core', style: TextStyle(fontSize: 10, color: Colors.white54, fontWeight: FontWeight.bold)),
-                      Text(widget.core.status,
-                          style: const TextStyle(fontSize: 11), maxLines: 2, overflow: TextOverflow.ellipsis),
-                      const SizedBox(height: 4),
-                      Text('FPS: ${widget.core.fps}',
-                          style: const TextStyle(fontSize: 11)),
-                      Text('Audio: ${widget.core.audioLevel}/100',
-                          style: const TextStyle(fontSize: 11)),
-                    ]),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        _StatLine(label: 'Status', value: widget.core.status),
+                        _StatLine(label: 'FPS', value: '${widget.core.fps}'),
+                        _StatLine(
+                            label: 'Audio',
+                            value: '${widget.core.audioLevel}/100'),
+                        if (canLaunch)
+                          Padding(
+                            padding: const EdgeInsets.only(top: 6),
+                            child: SizedBox(
+                              width: double.infinity,
+                              height: 28,
+                              child: FilledButton.icon(
+                                onPressed: _launchEmulator,
+                                icon: const Icon(Icons.play_arrow, size: 14),
+                                label: const Text('Launch',
+                                    style: TextStyle(fontSize: 11)),
+                                style: FilledButton.styleFrom(
+                                  padding: EdgeInsets.zero,
+                                  minimumSize: const Size(0, 28),
+                                ),
+                              ),
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 8),
+                    child: TextButton(
+                      onPressed: () => Navigator.of(context).push(
+                          MaterialPageRoute(
+                              builder: (_) => SetupWizardScreen(onComplete: () {
+                                    _loadPaths();
+                                    Navigator.of(context).pop();
+                                  }))),
+                      style: TextButton.styleFrom(
+                        padding: EdgeInsets.zero,
+                        minimumSize: const Size(0, 28),
+                      ),
+                      child: const Text('Re-run setup',
+                          style: TextStyle(fontSize: 11)),
+                    ),
                   ),
                 ]),
               ),
-              const VerticalDivider(width: 1),
-              Expanded(
-                child: Column(children: [
-                  if (_category == WorkbenchCategory.games)
-                    Padding(
-                      padding: const EdgeInsets.all(8),
-                      child: Row(children: [
-                        Expanded(
-                          child: Text(
-                              _gamesFolder.isEmpty ? '(no folder)' : _gamesFolder,
-                              style: const TextStyle(fontSize: 11, color: Colors.white54),
-                              overflow: TextOverflow.ellipsis),
-                        ),
-                        FilledButton.icon(
-                          onPressed: canLaunch ? _launchEmulator : null,
-                          icon: const Icon(Icons.play_arrow, size: 18),
-                          label: const Text('Launch'),
-                        ),
-                      ]),
-                    ),
-                  Expanded(child: _contentForCategory()),
-                ]),
-              ),
+              const VerticalDivider(width: 1, color: Color(0xFF1A1F2C)),
+              Expanded(child: _contentForCategory()),
             ]),
+    );
+  }
+}
+
+class _SidebarItem extends StatelessWidget {
+  final String icon;
+  final String title;
+  final bool selected;
+  final VoidCallback onTap;
+  const _SidebarItem({
+    required this.icon,
+    required this.title,
+    required this.selected,
+    required this.onTap,
+  });
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+        decoration: BoxDecoration(
+          color: selected ? const Color(0xFF1F2632) : null,
+          borderRadius: BorderRadius.circular(4),
+        ),
+        child: Row(children: [
+          Text(icon, style: const TextStyle(fontSize: 14)),
+          const SizedBox(width: 8),
+          Text(title,
+              style: TextStyle(
+                  fontSize: 12,
+                  color: selected ? Colors.white : const Color(0xFFB9C2CE),
+                  fontWeight: selected ? FontWeight.w600 : FontWeight.normal)),
+        ]),
+      ),
+    );
+  }
+}
+
+class _StatLine extends StatelessWidget {
+  final String label;
+  final String value;
+  const _StatLine({required this.label, required this.value});
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 1),
+      child: Row(children: [
+        SizedBox(
+            width: 46,
+            child: Text(label,
+                style: const TextStyle(fontSize: 10, color: Colors.white38))),
+        Expanded(
+          child: Text(value,
+              style: const TextStyle(fontSize: 10, color: Colors.white70),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis),
+        ),
+      ]),
     );
   }
 }

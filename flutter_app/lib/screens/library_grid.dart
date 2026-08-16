@@ -132,10 +132,10 @@ class _LibraryGridState extends State<LibraryGrid> {
         .where((t) => counts[t] != null && counts[t]! > 0)
         .toList();
     return SizedBox(
-      height: 36,
+      height: 28,
       child: ListView(
         scrollDirection: Axis.horizontal,
-        padding: const EdgeInsets.symmetric(horizontal: 12),
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
         children: [
           for (final tab in tabs) ...[
             _TabButton(
@@ -144,7 +144,7 @@ class _LibraryGridState extends State<LibraryGrid> {
               selected: tab == _filter,
               onTap: () => setState(() => _tab = tab),
             ),
-            const SizedBox(width: 6),
+            const SizedBox(width: 3),
           ],
         ],
       ),
@@ -171,40 +171,34 @@ class _LibraryGridState extends State<LibraryGrid> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(16, 14, 16, 6),
-          child: Text(
-            'Game Library',
-            style: const TextStyle(
-                color: Colors.white,
-                fontSize: 20,
-                fontWeight: FontWeight.bold),
-          ),
-        ),
         _buildTabs(),
         Padding(
-          padding: const EdgeInsets.fromLTRB(12, 6, 12, 4),
-          child: TextField(
-            onChanged: (v) => setState(() => _search = v),
-            style: const TextStyle(color: Colors.white, fontSize: 13),
-            decoration: const InputDecoration(
-              hintText: 'Search games...',
-              hintStyle: TextStyle(color: Color(0xFF6D7689)),
-              isDense: true,
-              contentPadding:
-                  EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-              border: OutlineInputBorder(),
+          padding: const EdgeInsets.fromLTRB(8, 4, 8, 4),
+          child: SizedBox(
+            height: 32,
+            child: TextField(
+              onChanged: (v) => setState(() => _search = v),
+              style: const TextStyle(color: Colors.white, fontSize: 12),
+              decoration: const InputDecoration(
+                hintText: 'Search games...',
+                hintStyle: TextStyle(color: Color(0xFF6D7689)),
+                isDense: true,
+                contentPadding:
+                    EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                border: OutlineInputBorder(),
+                isCollapsed: true,
+              ),
             ),
           ),
         ),
         Padding(
-          padding: const EdgeInsets.fromLTRB(12, 2, 12, 4),
+          padding: const EdgeInsets.fromLTRB(8, 0, 8, 2),
           child: Text(
             _scan.entries.isEmpty
-                ? 'No Saturn disc images found. Supported: CHD, CUE, MDS, CCD, ISO.'
-                : '${entries.length} of ${_scan.entries.length} entries | ${_scan.unreadableCount} unreadable',
+                ? 'No games found. Supported: CHD, CUE, MDS, CCD, ISO.'
+                : '${entries.length} of ${_scan.entries.length} | ${_scan.unreadableCount} unreadable',
             style: const TextStyle(
-                color: Color(0xFF6D7689), fontSize: 12),
+                color: Color(0xFF6D7689), fontSize: 10),
           ),
         ),
         Expanded(
@@ -263,15 +257,15 @@ class _TabButton extends StatelessWidget {
       color: Colors.transparent,
       child: InkWell(
         onTap: onTap,
-        borderRadius: BorderRadius.circular(8),
+        borderRadius: BorderRadius.circular(4),
         child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 10),
+          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
           alignment: Alignment.center,
           decoration: BoxDecoration(
             color: selected
                 ? const Color(0xFF3D8BFF)
                 : const Color(0xFF1A1F2C),
-            borderRadius: BorderRadius.circular(8),
+            borderRadius: BorderRadius.circular(4),
             border: Border.all(
               color: selected
                   ? const Color(0xFF3D8BFF)
@@ -281,17 +275,13 @@ class _TabButton extends StatelessWidget {
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Text(
-                label,
-                style: TextStyle(
-                    color: fg, fontSize: 13, fontWeight: FontWeight.w500),
-              ),
-              const SizedBox(width: 5),
-              Text(
-                '$count',
-                style: const TextStyle(
-                    color: Color(0xFF6D7689), fontSize: 11),
-              ),
+              Text(label,
+                  style: TextStyle(
+                      color: fg, fontSize: 11, fontWeight: FontWeight.w500)),
+              const SizedBox(width: 3),
+              Text('$count',
+                  style: const TextStyle(
+                      color: Color(0xFF6D7689), fontSize: 10)),
             ],
           ),
         ),
