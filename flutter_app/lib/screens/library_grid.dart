@@ -1,10 +1,14 @@
 // library_grid.dart — The library screen.
 //
-// Pulls MediaEntry scans via [LibraryScanner], fans them out to the
-// [BezelIndex] for bezel lookups (those happen inside each [MediaCard]
-// so the grid stays responsive), and exposes a search box + format
-// filter row. Selecting a tile hands the [MediaEntry] back to the parent
-// (so the parent can route into the game launcher / details sheet).
+// Pulls MediaEntry scans via [LibraryScanner], exposes a search box
+// + A-Z + 0-9 sort tabs. Selecting a tile hands the [MediaEntry]
+// back to the parent (so the parent can route into the game launcher).
+//
+// Sort tabs (All / 0-9 / A / B / ... / Z) partition games by their
+// baseName's first character. Case-insensitive. The format filter that
+// used to live here was dropped — the bezel index + cover art are what
+// matter, and the bezel A-Z folder layout already gives letter-based
+// organisation.
 
 import 'package:flutter/material.dart';
 
@@ -12,51 +16,28 @@ import '../data/media_entry.dart';
 import '../services/library_scanner.dart';
 import '../widgets/media_card.dart';
 
-/// Possible tab filters across the top. `all` is the unfiltered view;
-/// the format filters show only their respective kind.
-enum LibraryFilter { all, chd, cue, mds, ccd, iso, other }
+const _digits = '0-9';
 
-extension _FilterInfo on LibraryFilter {
-  String get label {
-    switch (this) {
-      case LibraryFilter.all:
-        return 'All';
-      case LibraryFilter.chd:
-        return 'CHD';
-      case LibraryFilter.cue:
-        return 'CUE';
-      case LibraryFilter.mds:
-        return 'MDS';
-      case LibraryFilter.ccd:
-        return 'CCD';
-      case LibraryFilter.iso:
-        return 'ISO';
-      case LibraryFilter.other:
-        return 'Other';
-    }
+/// Letter tab labels. 0-9 first (file names starting with a digit are
+/// common — 1943.chd, etc.), then A-Z. 'All' shows everything.
+List<String> get _sortTabs {
+  final tabs = <String>[_digits];
+  for (var c = 0; c < 26; c++) {
+    tabs.add(String.fromCharCode(0x41 + c));
   }
-
-  bool matches(MediaFormat format) {
-    switch (this) {
-      case LibraryFilter.all:
-        return true;
-      case LibraryFilter.chd:
-        return format == MediaFormat.chd;
-      case LibraryFilter.cue:
-        return format == MediaFormat.cue;
-      case LibraryFilter.mds:
-        return format == MediaFormat.mds;
-      case LibraryFilter.ccd:
-        return format == MediaFormat.ccd;
-      case LibraryFilter.iso:
-        return format == MediaFormat.iso;
-      case LibraryFilter.other:
-        return format == MediaFormat.unknown;
-    }
-  }
+  return tabs;
 }
 
-/// Scanned games laid out in a responsive grid + search + format filter.
+String _firstCharLower(MediaEntry e) {
+  final s = e.baseName.trim();
+  if (s.isEmpty) return '#';
+  final c = s[0].toLowerCase();
+  if (RegExp(r'[a-z]').hasMatch(c)) return c;
+  if (RegExp(r'[0-9]').hasMatch(c)) return _digits;
+  return '#';
+}
+
+/// Scanned games laid out in a responsive grid + search + letter sort.
 class LibraryGrid extends StatefulWidget {
   /// Directory to scan. Pass null to skip the scan (e.g. when the user
   /// hasn't picked a folder yet). Recomputed whenever [folderPath] changes.
@@ -83,7 +64,8 @@ class LibraryGrid extends StatefulWidget {
 
 class _LibraryGridState extends State<LibraryGrid> {
   String _search = '';
-  LibraryFilter _filter = LibraryFilter.all;
+  String _tab = 'All';
+  String get _filter => _tab;
 
   /// The latest scan result. Recomputed by [_rescan] whenever the source
   /// folder changes.
@@ -121,48 +103,46 @@ class _LibraryGridState extends State<LibraryGrid> {
     });
   }
 
-  /// Apply search + format filter on top of [_scan].
+  /// Apply search + letter filter on top of [_scan].
   List<MediaEntry> get _filtered {
     final q = _search.trim().toLowerCase();
     return _scan.entries.where((e) {
-      final formatOk = _filter.matches(e.format);
+      final letterOk = _filter == 'All' || _firstCharLower(e) == _filter.toLowerCase();
       final searchOk = q.isEmpty ||
           e.displayName.toLowerCase().contains(q) ||
           e.baseName.toLowerCase().contains(q);
-      return formatOk && searchOk;
+      return letterOk && searchOk;
     }).toList();
   }
 
-  Map<LibraryFilter, int> get _counts {
-    final result = <LibraryFilter, int>{
-      for (final f in LibraryFilter.values) f: 0,
-    };
+  /// Count entries per letter tab. Letters with zero matches are hidden
+  /// from the tab row, keeping the strip short on small libraries.
+  Map<String, int> get _counts {
+    final result = <String, int>{'All': _scan.entries.length};
     for (final e in _scan.entries) {
-      // Increment any matching filter and "all".
-      result[LibraryFilter.all] = (result[LibraryFilter.all] ?? 0) + 1;
-      for (final f in LibraryFilter.values) {
-        if (f != LibraryFilter.all && f.matches(e.format)) {
-          result[f] = (result[f] ?? 0) + 1;
-        }
-      }
+      final c = _firstCharLower(e);
+      result[c] = (result[c] ?? 0) + 1;
     }
     return result;
   }
 
   Widget _buildTabs() {
     final counts = _counts;
+    final tabs = ['All', ..._sortTabs]
+        .where((t) => counts[t] != null && counts[t]! > 0)
+        .toList();
     return SizedBox(
       height: 36,
       child: ListView(
         scrollDirection: Axis.horizontal,
         padding: const EdgeInsets.symmetric(horizontal: 12),
         children: [
-          for (final tab in LibraryFilter.values) ...[
+          for (final tab in tabs) ...[
             _TabButton(
-              label: tab.label,
+              label: tab,
               count: counts[tab] ?? 0,
               selected: tab == _filter,
-              onTap: () => setState(() => _filter = tab),
+              onTap: () => setState(() => _tab = tab),
             ),
             const SizedBox(width: 6),
           ],
@@ -231,7 +211,7 @@ class _LibraryGridState extends State<LibraryGrid> {
           child: entries.isEmpty
               ? const Center(
                   child: Text(
-                    'No games in this category.',
+                    'No games in this letter.',
                     style: TextStyle(color: Color(0xFF6D7689)),
                   ),
                 )

@@ -108,6 +108,10 @@ typedef _VoidHandle5IntNative =
 typedef _VoidHandle5IntDart =
     void Function(ffi.Pointer<ffi.Uint8>, int, int, int, int, int);
 
+typedef _VoidHandleLongNative = ffi.Void Function(_H, ffi.Int64);
+typedef _VoidHandleLongDart =
+    void Function(ffi.Pointer<ffi.Uint8>, int);
+
 typedef _StrHandleNative = ffi.Pointer<Utf8> Function(_H);
 typedef _StrHandleDart = ffi.Pointer<Utf8> Function(ffi.Pointer<ffi.Uint8>);
 
@@ -204,6 +208,9 @@ class YmirCoreBindings {
 
   late final _setVirtuaGunFbSize = _lib.lookupFunction<_VoidHandleIntIntNative, _VoidHandleIntIntDart>(
       'ymir_bridge_set_virtua_gun_fb_size');
+  late final _setRtcToHost = _lib.lookupFunction<
+      _VoidHandleLongNative,
+      _VoidHandleLongDart>('ymir_bridge_set_rtc_to_host');
 
   // ============================================================
   //  Public Dart wrappers
@@ -361,6 +368,10 @@ class YmirCoreBindings {
 
   void setVirtuaGunFbSize(ffi.Pointer<ffi.Uint8> p, int w, int h) {
     _setVirtuaGunFbSize(p, w, h);
+  }
+
+  void setRtcToHost(ffi.Pointer<ffi.Uint8> p, int offsetSeconds) {
+    _setRtcToHost(p, offsetSeconds);
   }
 }
 

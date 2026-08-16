@@ -210,6 +210,12 @@ int32_t ymir_bridge_save_state(YmirInstance *inst, const char *path);
 /* Load state from path. */
 int32_t ymir_bridge_load_state(YmirInstance *inst, const char *path);
 
+/* ---- RTC ---- */
+/* Set the SMPC real-time clock to host time (optionally offset by
+ * `offsetSeconds`). Called before LoadIPL so the BIOS Set Clock
+ * wizard shows the device's current date+time. */
+void ymir_bridge_set_rtc_to_host(YmirInstance *inst, int64_t offsetSeconds);
+
 #ifdef __cplusplus
 } /* extern "C" */
 #endif

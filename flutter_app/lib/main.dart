@@ -83,7 +83,17 @@ class _YmirAppState extends State<YmirApp> with WidgetsBindingObserver {
       final core = YmirCoreBindingsAdapter(bindings);
       core.create();
 
+      // Set the SMPC RTC to the device's current clock BEFORE LoadIPL.
+      // The BIOS Set Clock wizard then shows the right date+time so the
+      // user can just press A to confirm and skip it on subsequent boots
+      // (SMPC persistent state restores language/region preference too).
+      core.setRtcToHost(offsetSeconds: 0);
+
       // Restore SMPC state from the previous launch if available
+      // (skips the Set Clock / Set Language wizard on subsequent boots).
+      if (File(_smpcStatePath).existsSync()) {
+        core.loadSmpcState(_smpcStatePath);
+      }
       // (skips the Set Clock / Set Language wizard on subsequent boots).
       if (File(_smpcStatePath).existsSync()) {
         core.loadSmpcState(_smpcStatePath);

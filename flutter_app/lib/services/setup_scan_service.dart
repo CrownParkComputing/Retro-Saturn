@@ -92,7 +92,34 @@ class SetupScanService {
     }
 
     return ScanResult(folderPath: folderPath,
-        biosCandidates: bios, games: games);
+        biosCandidates: bios, games: _dedup(games));
+  }
+
+  /// Two CHD/CUE files for the same game often live side by side — e.g.
+  /// `Alien Trilogy (US).chd` and `Alien_Trilogy__US_.chd`. Dedup by
+  /// bezelKey (already normalized via `LibraryScanner.normalizeBezelKey`)
+  /// keeping the lexicographically-first entry per key. */
+  static List<MediaEntry> _dedup(List<MediaEntry> games) {
+    final byKey = <String, MediaEntry>{};
+    for (final g in games) {
+      final key = g.bezelKey.isEmpty ? g.path : g.bezelKey;
+      final existing = byKey[key];
+      if (existing == null) {
+        byKey[key] = g;
+      } else {
+        try {
+          final aSz = File(existing.path).lengthSync();
+          final bSz = File(g.path).lengthSync();
+          if (bSz > aSz) byKey[key] = g;
+        } catch (_) {
+          // can't stat, keep whichever we saw first
+        }
+      }
+    }
+    final out = byKey.values.toList()
+      ..sort((a, b) => a.displayName.toLowerCase()
+          .compareTo(b.displayName.toLowerCase()));
+    return out;
   }
 
   /// Returns the default scan folder, falling back to none.

@@ -810,6 +810,15 @@ int32_t ymir_bridge_swap_state(YmirInstance *inst, const char *path) {
     return enqueue_request(inst, std::move(req));
 }
 
+void ymir_bridge_set_rtc_to_host(YmirInstance *inst, int64_t offsetSeconds) {
+    if (!inst) return;
+    /* Set the SMPC's RTC to the host's current date+time, optionally
+     * shifted (e.g. +9h for JST). Called before LoadIPL so the BIOS
+     * Set Clock wizard shows the device's clock. */
+    auto dt = util::datetime::host(offsetSeconds);
+    inst->saturn->SMPC.GetRTC().SetDateTime(dt);
+}
+
 } /* extern "C" */
 
 /* ---- internal helpers exposed to audio backends (same TU) ---- */

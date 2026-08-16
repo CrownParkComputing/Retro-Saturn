@@ -49,6 +49,7 @@ abstract class YmirCore {
   void setPadButton(int port, YmirButton button, bool pressed);
   void setVirtuaGunInput(int port, int x, int y, bool trigger, bool start);
   void setVirtuaGunFbSize(int width, int height);
+  void setRtcToHost({int offsetSeconds = 0});
   void setAnalogAxis(int port, int lx, int ly, int rx, int ry);
 
   // Save state
@@ -159,6 +160,10 @@ class YmirCoreBindingsAdapter implements YmirCore {
   @override
   void setVirtuaGunFbSize(int width, int height) =>
       _bindings.setVirtuaGunFbSize(_h(), width, height);
+
+  @override
+  void setRtcToHost({int offsetSeconds = 0}) =>
+      _bindings.setRtcToHost(_h(), offsetSeconds);
 
   @override
   void setAnalogAxis(int port, int lx, int ly, int rx, int ry) =>

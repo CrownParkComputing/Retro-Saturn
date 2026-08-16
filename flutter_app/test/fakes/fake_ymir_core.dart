@@ -113,6 +113,10 @@ class FakeYmirCore extends ChangeNotifier implements YmirCore {
     calls.add('gunFbSize:$width,$height');
   }
   @override
+  void setRtcToHost({int offsetSeconds = 0}) {
+    calls.add('rtc:$offsetSeconds');
+  }
+  @override
   void setAnalogAxis(int port, int lx, int ly, int rx, int ry) {
     calls.add('analog:$port:$lx,$ly,$rx,$ry');
   }
