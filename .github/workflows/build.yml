@@ -1,0 +1,125 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          # ymir-core has 8 sub-submodules (mio, fmt, imgui, xxHash, lz4,
+          # libchdr, concurrentqueue, vcpkg) which Flutter's CMake pulls
+          # in via add_subdirectory(libs/ymir-core).
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+      - run: flutter pub get
+        working-directory: flutter_app
+      - run: flutter analyze
+        working-directory: flutter_app
+      - run: flutter test
+        working-directory: flutter_app
+
+  android:
+    needs: analyze
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: subosito/flutter-action@v2
+      - uses: android-actions/setup-android@v3
+      - name: Build Android arm64-v8a .so
+        run: native/ymir_core/android/build.sh
+        env:
+          ANDROID_NDK_HOME: ${{ steps.setup-android.outputs.ndk-path }}
+      - run: |
+          test -f flutter_app/android/app/src/main/jniLibs/arm64-v8a/libymircore.so
+      - run: flutter build apk --release
+        working-directory: flutter_app
+      - run: flutter build appbundle --release
+        working-directory: flutter_app
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android-apk
+          path: flutter_app/build/app/outputs/flutter-apk/app-release.apk
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android-aab
+          path: flutter_app/build/app/outputs/bundle/release/app-release.aab
+
+  linux:
+    needs: analyze
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: subosito/flutter-action@v2
+      - run: sudo apt-get install -y libasound2-dev
+      - name: Build Linux host tests + .so
+        run: native/ymir_core/linux/build-ymir-linux.sh
+      - name: Run native tests
+        run: |
+          for t in ymir_smoke_test ymir_peripheral_test \
+                   ymir_swap_snapshot_test ymir_audio_tone_test; do
+            native/ymir_core/linux/build/$t
+          done
+      - run: flutter build linux --release
+        working-directory: flutter_app
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-bundle
+          path: flutter_app/build/linux/x64/release/bundle
+
+  ios:
+    needs: analyze
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: subosito/flutter-action@v2
+      - name: Cross-build iOS arm64 device slice via Docker
+        run: tools/build-ios-linux.sh
+      - name: Build iOS Simulator slice (Mac-only step)
+        run: |
+          if [ -d "$HOME/AndroidStudioProjects/Ymir/libs/ymir-core" ]; then
+            native/ymir_core/ios/build-core-simulator.sh
+          else
+            echo "::warning::Skipping iOS simulator slice (upstream ymir-core not present)"
+          fi
+      - run: |
+          mkdir -p flutter_app/ios/Frameworks
+          cp -R native/ymir_core/ios/build/YmirCore.framework \
+              flutter_app/ios/Frameworks/
+          cp native/ymir_core/ios/build/libymircore.dylib \
+              flutter_app/ios/Frameworks/
+      - run: flutter build ios --release --no-codesign
+        working-directory: flutter_app
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ios-app
+          path: flutter_app/build/ios/iphoneos/Runner.app
+
+  release:
+    needs: [android, linux, ios]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            android-apk/*.apk
+            android-aab/*.aab
+            ios-app/*.app.zip
+            linux-bundle/*.tar.gz
