@@ -50,6 +50,7 @@ abstract class YmirCore {
   void setVirtuaGunInput(int port, int x, int y, bool trigger, bool start);
   void setVirtuaGunFbSize(int width, int height);
   void setRtcToHost({int offsetSeconds = 0});
+  void setPersistentSmpcPath(String path);
   void setAnalogAxis(int port, int lx, int ly, int rx, int ry);
 
   // Save state
@@ -164,6 +165,10 @@ class YmirCoreBindingsAdapter implements YmirCore {
   @override
   void setRtcToHost({int offsetSeconds = 0}) =>
       _bindings.setRtcToHost(_h(), offsetSeconds);
+
+  @override
+  void setPersistentSmpcPath(String path) =>
+      _bindings.setPersistentSmpcPath(_h(), path);
 
   @override
   void setAnalogAxis(int port, int lx, int ly, int rx, int ry) =>

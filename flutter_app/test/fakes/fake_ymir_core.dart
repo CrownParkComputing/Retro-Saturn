@@ -117,6 +117,10 @@ class FakeYmirCore extends ChangeNotifier implements YmirCore {
     calls.add('rtc:$offsetSeconds');
   }
   @override
+  void setPersistentSmpcPath(String path) {
+    calls.add('smpcPath:$path');
+  }
+  @override
   void setAnalogAxis(int port, int lx, int ly, int rx, int ry) {
     calls.add('analog:$port:$lx,$ly,$rx,$ry');
   }

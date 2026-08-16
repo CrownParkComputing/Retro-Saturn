@@ -216,6 +216,12 @@ int32_t ymir_bridge_load_state(YmirInstance *inst, const char *path);
  * wizard shows the device's current date+time. */
 void ymir_bridge_set_rtc_to_host(YmirInstance *inst, int64_t offsetSeconds);
 
+/* Set the SMPC persistent-data file path. ymir-core reads this file
+ * automatically when SMPC boots; if the file exists and contains a
+ * valid 25-byte SMPC state, the BIOS skips the Set Clock / Set
+ * Language wizard. Called BEFORE LoadIPL. */
+void ymir_bridge_set_persistent_smpc_path(YmirInstance *inst, const char *path);
+
 #ifdef __cplusplus
 } /* extern "C" */
 #endif

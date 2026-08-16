@@ -112,6 +112,10 @@ typedef _VoidHandleLongNative = ffi.Void Function(_H, ffi.Int64);
 typedef _VoidHandleLongDart =
     void Function(ffi.Pointer<ffi.Uint8>, int);
 
+typedef _VoidHandleStrNative = ffi.Void Function(_H, ffi.Pointer<Utf8>);
+typedef _VoidHandleStrDart =
+    void Function(ffi.Pointer<ffi.Uint8>, ffi.Pointer<Utf8>);
+
 typedef _StrHandleNative = ffi.Pointer<Utf8> Function(_H);
 typedef _StrHandleDart = ffi.Pointer<Utf8> Function(ffi.Pointer<ffi.Uint8>);
 
@@ -211,6 +215,9 @@ class YmirCoreBindings {
   late final _setRtcToHost = _lib.lookupFunction<
       _VoidHandleLongNative,
       _VoidHandleLongDart>('ymir_bridge_set_rtc_to_host');
+  late final _setPersistentSmpcPath = _lib.lookupFunction<
+      _VoidHandleStrNative,
+      _VoidHandleStrDart>('ymir_bridge_set_persistent_smpc_path');
 
   // ============================================================
   //  Public Dart wrappers
@@ -372,6 +379,15 @@ class YmirCoreBindings {
 
   void setRtcToHost(ffi.Pointer<ffi.Uint8> p, int offsetSeconds) {
     _setRtcToHost(p, offsetSeconds);
+  }
+
+  void setPersistentSmpcPath(ffi.Pointer<ffi.Uint8> p, String path) {
+    final cstr = path.toNativeUtf8();
+    try {
+      _setPersistentSmpcPath(p, cstr);
+    } finally {
+      calloc.free(cstr);
+    }
   }
 }
 

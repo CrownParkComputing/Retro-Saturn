@@ -819,6 +819,16 @@ void ymir_bridge_set_rtc_to_host(YmirInstance *inst, int64_t offsetSeconds) {
     inst->saturn->SMPC.GetRTC().SetDateTime(dt);
 }
 
+void ymir_bridge_set_persistent_smpc_path(YmirInstance *inst, const char *path) {
+    if (!inst || !path) return;
+    /* Tell ymir-core where to find the SMPC persistent data file.
+     * Must be set before LoadIPL so ymir-core reads it during boot
+     * and the BIOS wizard auto-skips. */
+    std::error_code ec;
+    inst->saturn->SMPC.LoadPersistentDataFrom(path, ec);
+    /* ec is intentionally ignored: a missing file is fine (first run). */
+}
+
 } /* extern "C" */
 
 /* ---- internal helpers exposed to audio backends (same TU) ---- */
