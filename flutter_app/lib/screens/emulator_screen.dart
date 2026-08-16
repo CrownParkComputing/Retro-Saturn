@@ -10,6 +10,7 @@ import 'package:ymir_multiplatform/data/media_entry.dart';
 import 'package:ymir_multiplatform/data/peripheral_type.dart';
 import 'package:ymir_multiplatform/ffi/ymir_bindings.dart';
 import 'package:ymir_multiplatform/ffi/ymir_core.dart';
+import 'package:ymir_multiplatform/services/app_log.dart';
 import 'package:ymir_multiplatform/services/backup_ram_service.dart';
 import 'package:ymir_multiplatform/services/gamepad_service.dart';
 import 'package:ymir_multiplatform/widgets/framebuffer_view.dart';
@@ -72,16 +73,21 @@ class _EmulatorScreenState extends State<EmulatorScreen> {
 
     if (biosPath != null && File(biosPath).existsSync()) {
       setState(() => _lastResult = 'loading BIOS…');
+      AppLog.log('loadBios: $biosPath');
       final rc = widget.core.loadBios(biosPath);
+      AppLog.log('loadBios rc=$rc');
       setState(() => _lastResult = 'BIOS rc=$rc');
     } else {
+      AppLog.log('loadBios: skipped (${biosPath == null ? "no path" : "missing file"})');
       setState(() => _lastResult = 'no BIOS (run setup)');
     }
 
     if (entry != null && File(entry.path).existsSync()) {
       _currentDisc = entry.path;
       setState(() => _lastResult = 'loading disc…');
+      AppLog.log('loadDisc: ${entry.path}');
       final rc = widget.core.loadDisc(entry.path);
+      AppLog.log('loadDisc rc=$rc');
       setState(() => _lastResult = 'disc rc=$rc (${entry.displayName})');
 
       // Restore NVRAM (Saturn backup RAM). Wrapped — a missing or
@@ -89,17 +95,20 @@ class _EmulatorScreenState extends State<EmulatorScreen> {
       // here would crash the whole screen.
       try {
         final loaded = await BackupRamService.loadInto(widget.core, entry.path);
+        AppLog.log('NVRAM load: $loaded (${entry.displayName})');
         debugPrint('NVRAM load: $loaded');
-      } catch (_) {
-        // ignore — proceed without NVRAM
+      } catch (e) {
+        AppLog.log('NVRAM load exception: $e');
       }
 
       // Start auto-save every 60s while playing (longer interval to
       // avoid racing with in-game BIOS operations like 'Erase backup').
       BackupRamService.startAutoSave(widget.core, entry.path);
+      AppLog.log('NVRAM auto-save started (60s interval)');
     }
 
     setState(() => _lastResult = 'running (${widget.core.status})');
+    AppLog.log('emulator running: ${widget.core.status} @ ${widget.core.fps}fps');
   }
 
   @override

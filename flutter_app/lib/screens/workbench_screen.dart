@@ -10,6 +10,7 @@ import 'package:ymir_multiplatform/screens/emulator_screen.dart';
 import 'package:ymir_multiplatform/screens/history_screen.dart';
 import 'package:ymir_multiplatform/screens/input_settings_screen.dart';
 import 'package:ymir_multiplatform/screens/library_grid.dart';
+import 'package:ymir_multiplatform/screens/logs_screen.dart';
 import 'package:ymir_multiplatform/screens/paths_settings_screen.dart';
 import 'package:ymir_multiplatform/screens/setup_wizard_screen.dart';
 import 'package:ymir_multiplatform/services/app_prefs.dart';
@@ -84,6 +85,8 @@ class _WorkbenchScreenState extends State<WorkbenchScreen> {
         return InputSettingsScreen(core: widget.core);
       case WorkbenchCategory.history:
         return const HistoryScreen();
+      case WorkbenchCategory.logs:
+        return const LogsScreen();
       case WorkbenchCategory.about:
         return const AboutScreen();
     }

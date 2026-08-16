@@ -10,6 +10,7 @@ import 'package:crypto/crypto.dart' as crypto;
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:ymir_multiplatform/ffi/ymir_core.dart';
+import 'package:ymir_multiplatform/services/app_log.dart';
 
 class BackupRamService {
   static const _savesSubdir = 'saves';
@@ -63,11 +64,16 @@ class BackupRamService {
     final tmp = File('${f.path}.save.tmp');
     try {
       final rc = core.saveBackupMemory(tmp.path);
-      if (rc != 0) return;
+      if (rc != 0) {
+        AppLog.log('NVRAM save: rc=$rc (${discPath.split('/').last})');
+        return;
+      }
       if (tmp.existsSync()) {
         await tmp.rename(f.path);
+        AppLog.log('NVRAM saved: ${f.path.split('/').last}');
       }
-    } catch (_) {
+    } catch (e) {
+      AppLog.log('NVRAM save exception: $e');
       if (tmp.existsSync()) await tmp.delete();
     }
   }

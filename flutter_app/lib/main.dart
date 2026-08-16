@@ -12,6 +12,7 @@ import 'package:ymir_multiplatform/ffi/ymir_core.dart';
 import 'package:ymir_multiplatform/ffi/ymir_native_paths.dart';
 import 'package:ymir_multiplatform/screens/setup_wizard_screen.dart';
 import 'package:ymir_multiplatform/screens/workbench_screen.dart';
+import 'package:ymir_multiplatform/services/app_log.dart';
 import 'package:ymir_multiplatform/services/app_prefs.dart';
 import 'package:ymir_multiplatform/services/backup_ram_service.dart';
 import 'package:ymir_multiplatform/services/smpc_state_service.dart';
@@ -21,6 +22,8 @@ void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await AppPrefs.load();
   await BackupRamService.ensureInit();
+  await AppLog.init();
+  AppLog.log('app start');
   runApp(const YmirApp());
 }
 

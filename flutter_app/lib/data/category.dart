@@ -7,6 +7,7 @@ enum WorkbenchCategory {
   paths('📂', 'Paths'),
   input('🕹️', 'Input'),
   history('📜', 'Memories'),
+  logs('📝', 'Logs'),
   about('ℹ️', 'About');
 
   final String icon;
