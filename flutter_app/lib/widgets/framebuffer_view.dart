@@ -15,12 +15,23 @@ import 'package:retro_saturn/ffi/ymir_core.dart';
 class FramebufferView extends StatefulWidget {
   final YmirCore core;
   final Duration pollInterval;
+  /// Draws the PANEL's redraw rate over the picture.
+  ///
+  /// Note this is not the core's frame rate: it counts how often this widget
+  /// pulled and decoded a framebuffer, which is bounded by [pollInterval].
+  /// The status row reports the core's own figure, so showing both means two
+  /// readouts labelled FPS that disagree -- off by default for that reason.
   final bool showFps;
 
   const FramebufferView({
     super.key,
     required this.core,
-    this.pollInterval = const Duration(milliseconds: 33),
+    // ~60fps, matching the rate the core actually produces and the interval
+    // Retro-Dosbox uses. At 33ms this timer could tick only 30 times a
+    // second, so a Saturn running at a solid 60 was displayed at half that
+    // no matter how fast the emulation went -- and the panel's own counter
+    // read 30 by construction, which is not a measurement, it is the cap.
+    this.pollInterval = const Duration(milliseconds: 16),
     this.showFps = false,
   });
 

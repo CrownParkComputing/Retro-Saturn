@@ -124,7 +124,10 @@ class _EmulatorScreenState extends State<EmulatorScreen> {
     final ptype = widget.core.getPeripheralType(1);
     final showGun = ptype == YmirPeripheralType.virtuaGun;
     return Stack(children: [
-      FramebufferView(core: widget.core, showFps: true),
+      // No FPS overlay: the status row already reports the core's rate, and
+      // this widget's counter measures its own redraws, which is a different
+      // number under the same name drawn over the top-right of the game.
+      FramebufferView(core: widget.core),
       if (showGun) VirtuaGunOverlay(core: widget.core, port: 1),
       if (widget.showPadOverlay) SaturnPadOverlay(core: widget.core),
     ]);
