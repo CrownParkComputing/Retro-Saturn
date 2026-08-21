@@ -18,9 +18,15 @@ jobs:
           # ymir-core has 8 sub-submodules (mio, fmt, imgui, xxHash, lz4,
           # libchdr, concurrentqueue, vcpkg) which Flutter's CMake pulls
           # in via add_subdirectory(libs/ymir-core).
+      # Pinned, like the Amiga, C64 and DOSBox workflows. Unpinned, this
+      # follows whatever stable is on the day, and a new analyzer lint turns
+      # a green pipeline red with no change to the code -- which is exactly
+      # what happened: CI on 3.47.1 found an issue 3.41.9 does not have, and
+      # the analyze job failing skipped android, linux, ios and release.
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
+          flutter-version: "3.41.9"
       - run: flutter pub get
         working-directory: flutter_app
       - run: flutter analyze
@@ -36,6 +42,9 @@ jobs:
         with:
           submodules: recursive
       - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: "3.41.9"
       - uses: android-actions/setup-android@v3
       - name: Build Android arm64-v8a .so
         run: native/ymir_core/android/build.sh
@@ -102,6 +111,9 @@ jobs:
         with:
           submodules: recursive
       - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: "3.41.9"
       - run: sudo apt-get install -y libasound2-dev
       - name: Build Linux host tests + .so
         run: native/ymir_core/linux/build-ymir-linux.sh
@@ -126,6 +138,9 @@ jobs:
         with:
           submodules: recursive
       - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: "3.41.9"
       - name: Cross-build iOS arm64 device slice via Docker
         run: tools/build-ios-linux.sh
       - name: Build iOS Simulator slice (Mac-only step)

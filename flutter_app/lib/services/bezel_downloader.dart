@@ -146,7 +146,10 @@ class BezelDownloader {
         }
         // Re-resolve relative redirects against the request URL.
         final next = Uri.parse(urlString).resolve(loc).toString();
-        return _downloadToFile(next, output, redirects + 1, onProgress);
+        // Awaited, not just returned: this sits inside a try whose finally
+        // closes the client, and an unawaited return lets that close race the
+        // redirect it handed off to.
+        return await _downloadToFile(next, output, redirects + 1, onProgress);
       }
       if (streamed.statusCode < 200 || streamed.statusCode >= 300) {
         throw HttpException('HTTP ${streamed.statusCode}');
