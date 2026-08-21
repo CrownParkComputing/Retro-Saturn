@@ -114,7 +114,15 @@ jobs:
         with:
           channel: stable
           flutter-version: "3.41.9"
-      - run: sudo apt-get install -y libasound2-dev
+      # flutter build linux needs the GTK stack, not just ALSA: the desktop
+      # embedder's CMakeLists does pkg_check_modules(gtk+-3.0) and fails the
+      # configure step without it. Only libasound2-dev was installed, which
+      # covers the core's audio backend and nothing the shell needs.
+      - run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libasound2-dev libgtk-3-dev liblzma-dev pkg-config \
+            ninja-build clang cmake
       - name: Build Linux host tests + .so
         run: native/ymir_core/linux/build-ymir-linux.sh
       - name: Run native tests
