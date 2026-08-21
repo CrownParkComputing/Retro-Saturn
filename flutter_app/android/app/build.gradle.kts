@@ -64,7 +64,11 @@ val keystoreConfig = resolveKeystore()
 
 android {
     namespace = "com.crownpark.retro_saturn"
-    compileSdk = flutter.compileSdkVersion
+    // Pinned, not flutter.compileSdkVersion. The whole Retro-* family states
+    // its SDK levels outright: a floating value takes whatever the Flutter
+    // on the build machine happens to default to, which is how Play
+    // compliance ends up depending on which laptop or runner did the build.
+    compileSdk = 36
     ndkVersion = flutter.ndkVersion
 
     compileOptions {
@@ -84,7 +88,14 @@ android {
         // app; existing installs would not auto-update. Pick once and keep.
         applicationId = "com.crownpark.ymir_multiplatform"
         minSdk = flutter.minSdkVersion
-        targetSdk = flutter.targetSdkVersion
+        // Play requires the target to stay within a year of the latest
+        // Android release - 36 or higher from 31 August 2026 - and refuses
+        // updates outright below that. flutter.targetSdkVersion floats with
+        // whichever Flutter version happens to run the build, so an older SDK
+        // on a CI runner or another machine could drop it under the bar
+        // without a line of this project changing. Compliance is a decision,
+        // so it is written down.
+        targetSdk = 36
         versionCode = flutter.versionCode
         versionName = flutter.versionName
     }

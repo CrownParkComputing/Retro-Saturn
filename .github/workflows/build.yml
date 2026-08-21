@@ -8,6 +8,11 @@ on:
     branches: [main]
   workflow_dispatch:
 
+env:
+  # One place, like Retro-C64. Repeating the literal in every job is how
+  # they drift apart.
+  FLUTTER_VERSION: '3.41.9'
+
 jobs:
   analyze:
     runs-on: ubuntu-latest
@@ -26,7 +31,7 @@ jobs:
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
-          flutter-version: "3.41.9"
+          flutter-version: ${{ env.FLUTTER_VERSION }}
       - run: flutter pub get
         working-directory: flutter_app
       - run: flutter analyze
@@ -44,7 +49,7 @@ jobs:
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
-          flutter-version: "3.41.9"
+          flutter-version: ${{ env.FLUTTER_VERSION }}
       - uses: android-actions/setup-android@v3
       - name: Build Android arm64-v8a .so
         run: native/ymir_core/android/build.sh
@@ -113,7 +118,7 @@ jobs:
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
-          flutter-version: "3.41.9"
+          flutter-version: ${{ env.FLUTTER_VERSION }}
       # flutter build linux needs the GTK stack, not just ALSA: the desktop
       # embedder's CMakeLists does pkg_check_modules(gtk+-3.0) and fails the
       # configure step without it. Only libasound2-dev was installed, which
@@ -148,7 +153,7 @@ jobs:
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
-          flutter-version: "3.41.9"
+          flutter-version: ${{ env.FLUTTER_VERSION }}
       # Built natively, on the Mac, with Xcode's own toolchain.
       #
       # This used to shell out to tools/build-ios-linux.sh, which drove the
