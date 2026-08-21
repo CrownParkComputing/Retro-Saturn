@@ -40,9 +40,12 @@ add_subdirectory("${YMIR_ROOT}" "${CMAKE_BINARY_DIR}/ymir-core-build")
 # generate (rejection 90426). Letting CMake produce the framework means the
 # Info.plist, the layout and the install_name are all consistent by
 # construction instead of assembled by a shell script afterwards.
+# audio_backend_ios.mm ONLY -- not audio_backend.cpp. Despite the plain name,
+# that file is the ALSA backend for Linux; the Android build likewise takes
+# only audio_backend_android.cpp. Compiling both would want alsa headers that
+# do not exist here and define the same entry points twice.
 add_library(YmirCore SHARED
     "${CMAKE_CURRENT_LIST_DIR}/../bridge/ymir_bridge.cpp"
-    "${CMAKE_CURRENT_LIST_DIR}/../bridge/audio_backend.cpp"
     "${CMAKE_CURRENT_LIST_DIR}/../bridge/audio_backend_ios.mm")
 
 target_compile_features(YmirCore PRIVATE cxx_std_17)

@@ -29,11 +29,20 @@ command -v xcrun >/dev/null || {
 echo "==> configuring (iOS ${IOS_MIN}, arm64, $(xcrun --sdk iphoneos --show-sdk-version) SDK)"
 # CMAKE_OSX_SYSROOT=iphoneos lets CMake resolve the SDK through xcrun rather
 # than a hardcoded path, so an Xcode upgrade does not silently break this.
+#
+# Code signing is off here on purpose. Xcode refuses to build an iOS target
+# without a development team, and CI has no identity to give it -- but this
+# framework does not need one: the Runner's Embed Frameworks phase carries
+# CodeSignOnCopy, so it is signed with the app's identity as it is copied in,
+# which is the signature that actually ships.
 cmake -S "$HERE" -B "$BUILD_DIR" -G Xcode \
     -DCMAKE_SYSTEM_NAME=iOS \
     -DCMAKE_OSX_SYSROOT=iphoneos \
     -DCMAKE_OSX_ARCHITECTURES=arm64 \
     -DCMAKE_OSX_DEPLOYMENT_TARGET="$IOS_MIN" \
+    -DCMAKE_XCODE_ATTRIBUTE_CODE_SIGNING_ALLOWED=NO \
+    -DCMAKE_XCODE_ATTRIBUTE_CODE_SIGNING_REQUIRED=NO \
+    -DCMAKE_XCODE_ATTRIBUTE_CODE_SIGN_IDENTITY="" \
     -DCMAKE_BUILD_TYPE=Release
 
 echo "==> building"
