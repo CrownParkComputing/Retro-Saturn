@@ -1,5 +1,5 @@
-name: ymir_multiplatform
-description: "Sega Saturn multiplatform emulator. Linux + Android + iOS."
+name: retro_saturn
+description: "Retro-Saturn -- Sega Saturn emulator for Android, iOS and Linux."
 publish_to: 'none'
 
 version: 0.1.0+1

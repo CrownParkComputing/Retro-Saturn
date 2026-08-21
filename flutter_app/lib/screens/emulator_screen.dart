@@ -1,21 +1,28 @@
-// emulator_screen.dart — Game launcher. Loads BIOS + disc from the
-// library grid tap, restores NVRAM (Saturn backup RAM), mounts the
-// gamepad service + Virtua Gun overlay when appropriate, and
-// auto-saves NVRAM every 30 seconds while playing.
+// emulator_screen.dart — Renders the emulated framebuffer + the
+// peripheral overlays (Virtua Gun, on-screen Saturn pad) inside the
+// workbench's content panel. Loads BIOS + disc from the library grid
+// tap, restores NVRAM (Saturn backup RAM), mounts the gamepad service,
+// and auto-saves NVRAM every 60 seconds while playing.
+//
+// The in-game toolbar (pad toggle, settings, pause, close) lives in
+// the workbench's status bar, beneath the content panel, matching
+// Retro-C64's EmulatorControlStrip pattern. The settings drawer is
+// rendered from the workbench too. This screen no longer owns its own
+// Scaffold -- the emulator chrome is below the picture, not on it.
 
 import 'dart:io';
 
 import 'package:flutter/material.dart';
-import 'package:ymir_multiplatform/data/media_entry.dart';
-import 'package:ymir_multiplatform/data/peripheral_type.dart';
-import 'package:ymir_multiplatform/ffi/ymir_bindings.dart';
-import 'package:ymir_multiplatform/ffi/ymir_core.dart';
-import 'package:ymir_multiplatform/services/app_log.dart';
-import 'package:ymir_multiplatform/services/backup_ram_service.dart';
-import 'package:ymir_multiplatform/services/gamepad_service.dart';
-import 'package:ymir_multiplatform/widgets/framebuffer_view.dart';
-import 'package:ymir_multiplatform/widgets/peripheral_selector.dart';
-import 'package:ymir_multiplatform/widgets/virtua_gun_overlay.dart';
+import 'package:retro_saturn/data/media_entry.dart';
+import 'package:retro_saturn/ffi/ymir_bindings.dart';
+import 'package:retro_saturn/ffi/ymir_core.dart';
+import 'package:retro_saturn/services/app_log.dart';
+import 'package:retro_saturn/services/backup_ram_service.dart';
+import 'package:retro_saturn/services/gamepad_service.dart';
+import 'package:retro_saturn/services/ymir_core_paths.dart';
+import 'package:retro_saturn/widgets/framebuffer_view.dart';
+import 'package:retro_saturn/widgets/saturn_pad_overlay.dart';
+import 'package:retro_saturn/widgets/virtua_gun_overlay.dart';
 
 class EmulatorScreen extends StatefulWidget {
   final YmirCore core;
@@ -23,12 +30,21 @@ class EmulatorScreen extends StatefulWidget {
   final String? gamesFolder;
   final MediaEntry? entry;
 
+  /// Owned by the workbench -- the in-game toolbar toggles this, and we
+  /// render the on-screen Saturn pad when it is true. Lifting it out of
+  /// EmulatorScreen means the pad toggle and the pad overlay see the
+  /// same source of truth (the workbench), which is what the previous
+  /// in-screen toolbar got wrong (toggle was here, overlay was never
+  /// rendered).
+  final bool showPadOverlay;
+
   const EmulatorScreen({
     super.key,
     required this.core,
     this.biosPath,
     this.gamesFolder,
     this.entry,
+    this.showPadOverlay = false,
   });
 
   @override
@@ -37,8 +53,6 @@ class EmulatorScreen extends StatefulWidget {
 
 class _EmulatorScreenState extends State<EmulatorScreen> {
   GamepadService? _gamepad;
-  bool _padVisible = false;
-  bool _paused = false;
   String _lastResult = 'starting…';
   String _currentDisc = '';
 
@@ -62,7 +76,7 @@ class _EmulatorScreenState extends State<EmulatorScreen> {
     }
     BackupRamService.stopAutoSave();
     try {
-      widget.core.saveSmpcState('/sdcard/Android/data/com.crownpark.ymir_multiplatform/files/roms/smpc_state.bin');
+      widget.core.saveSmpcState(YmirCorePaths.smpcStatePath);
     } catch (_) {}
     _gamepad?.dispose();
     super.dispose();
@@ -116,121 +130,10 @@ class _EmulatorScreenState extends State<EmulatorScreen> {
   Widget build(BuildContext context) {
     final ptype = widget.core.getPeripheralType(1);
     final showGun = ptype == YmirPeripheralType.virtuaGun;
-    return Scaffold(
-      backgroundColor: Colors.black,
-      drawer: _buildDrawer(context),
-      body: SafeArea(
-        child: Stack(children: [
-          FramebufferView(core: widget.core, showFps: true),
-          if (showGun) VirtuaGunOverlay(core: widget.core, port: 1),
-          Positioned(
-            top: 4, left: 4, right: 4,
-            child: Row(children: [
-              Flexible(
-                child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                  color: Colors.black54,
-                  child: Text(
-                    widget.core.status,
-                    style: const TextStyle(color: Colors.white, fontSize: 9),
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ),
-              ),
-              // In-game icons. Order + icons match ViceMultiplatform:
-              // pad toggle, keyboard / settings, pause, close.
-              const SizedBox(width: 4),
-              _InGameIcon(
-                tooltip: _padVisible
-                    ? 'Hide on-screen pad'
-                    : 'Show on-screen pad',
-                icon: _padVisible
-                    ? Icons.gamepad
-                    : Icons.gamepad_outlined,
-                onPressed: () => setState(() => _padVisible = !_padVisible),
-              ),
-              Builder(
-                builder: (ctx) => _InGameIcon(
-                  tooltip: 'Settings',
-                  icon: Icons.settings,
-                  onPressed: () => Scaffold.of(ctx).openDrawer(),
-                ),
-              ),
-              _InGameIcon(
-                tooltip: _paused ? 'Resume' : 'Pause',
-                icon: _paused ? Icons.play_arrow : Icons.pause,
-                onPressed: () {
-                  setState(() => _paused = !_paused);
-                  widget.core.setPresentationPaused(_paused);
-                },
-              ),
-              _InGameIcon(
-                tooltip: 'Reset',
-                icon: Icons.refresh,
-                onPressed: () => widget.core.reset(hard: false),
-              ),
-              _InGameIcon(
-                tooltip: 'Close game',
-                icon: Icons.close,
-                onPressed: () => Navigator.of(context).pop(),
-              ),
-            ]),
-          ),
-        ]),
-      ),
-    );
-  }
-
-  Widget _buildDrawer(BuildContext context) {
-    return Drawer(
-      child: SafeArea(
-        child: ListView(padding: const EdgeInsets.all(16), children: [
-          Text('Settings', style: Theme.of(context).textTheme.titleLarge),
-          const SizedBox(height: 16),
-          PeripheralSelector(core: widget.core, port: 1),
-          const SizedBox(height: 12),
-          PeripheralSelector(core: widget.core, port: 2),
-          const SizedBox(height: 16),
-          Text('Bridge status', style: Theme.of(context).textTheme.titleSmall),
-          Text(widget.core.status),
-          Text('FPS: ${widget.core.fps}'),
-          Text('Audio: ${widget.core.audioLevel}/100'),
-          Text('Muted: ${widget.core.audioMuted}'),
-          Text('Port 1: ${widget.core.getPeripheralType(1).displayName}'),
-          Text('Port 2: ${widget.core.getPeripheralType(2).displayName}'),
-          if (_currentDisc.isNotEmpty) Text('NVRAM: auto-save every 30s'),
-        ]),
-      ),
-    );
-  }
-}
-
-/// One Saturn pad overlay button + icon row, matching the in-game
-/// icon strip ViceMultiplatform has at the top-right of the
-/// emulator screen (pad / keyboard / pause / close).
-class _InGameIcon extends StatelessWidget {
-  final String tooltip;
-  final IconData icon;
-  final VoidCallback onPressed;
-  const _InGameIcon({
-    required this.tooltip,
-    required this.icon,
-    required this.onPressed,
-  });
-  @override
-  Widget build(BuildContext context) {
-    return Tooltip(
-      message: tooltip,
-      child: SizedBox(
-        width: 32, height: 32,
-        child: IconButton(
-          padding: EdgeInsets.zero,
-          iconSize: 18,
-          color: Colors.white,
-          icon: Icon(icon),
-          onPressed: onPressed,
-        ),
-      ),
-    );
+    return Stack(children: [
+      FramebufferView(core: widget.core, showFps: true),
+      if (showGun) VirtuaGunOverlay(core: widget.core, port: 1),
+      if (widget.showPadOverlay) SaturnPadOverlay(core: widget.core),
+    ]);
   }
 }

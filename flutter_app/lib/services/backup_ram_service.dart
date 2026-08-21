@@ -9,8 +9,8 @@ import 'dart:io';
 import 'package:crypto/crypto.dart' as crypto;
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
-import 'package:ymir_multiplatform/ffi/ymir_core.dart';
-import 'package:ymir_multiplatform/services/app_log.dart';
+import 'package:retro_saturn/ffi/ymir_core.dart';
+import 'package:retro_saturn/services/app_log.dart';
 
 class BackupRamService {
   static const _savesSubdir = 'saves';

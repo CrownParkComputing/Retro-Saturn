@@ -1,11 +1,14 @@
 // paths_settings_screen.dart — Edit the Saturn BIOS path + games folder
-// + trigger an auto-scan. Mirrors ViceMultiplatform's
-// paths_settings_screen.dart pattern.
+// + trigger an auto-scan + re-run the guided setup. Mirrors
+// ViceMultiplatform's paths_settings_screen.dart pattern. The "Re-run
+// setup" entry used to live in the sidebar footer; it is now here so
+// the rail stays a launcher.
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
-import 'package:ymir_multiplatform/services/app_prefs.dart';
-import 'package:ymir_multiplatform/services/setup_scan_service.dart';
+import 'package:retro_saturn/screens/setup_wizard_screen.dart';
+import 'package:retro_saturn/services/app_prefs.dart';
+import 'package:retro_saturn/services/setup_scan_service.dart';
 
 class PathsSettingsScreen extends StatefulWidget {
   const PathsSettingsScreen({super.key});
@@ -98,6 +101,28 @@ class _PathsSettingsScreenState extends State<PathsSettingsScreen> {
             label: const Text('Re-scan folder'),
           ),
         ]),
+        const SizedBox(height: 24),
+        _section('Setup'),
+        Card(
+          margin: EdgeInsets.zero,
+          child: ListTile(
+            leading: const Icon(Icons.replay),
+            title: const Text('Re-run setup wizard'),
+            subtitle: const Text(
+                'Re-pick the BIOS, games folder and core setup from scratch. '
+                'Useful after switching devices or restoring an Android backup.',
+                style: TextStyle(fontSize: 11, color: Colors.white54)),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () => Navigator.of(context).push(
+              MaterialPageRoute(
+                builder: (_) => SetupWizardScreen(onComplete: () {
+                  _load();
+                  Navigator.of(context).pop();
+                }),
+              ),
+            ),
+          ),
+        ),
         const SizedBox(height: 24),
         if (_scan != null) _scanSummary(),
       ]),

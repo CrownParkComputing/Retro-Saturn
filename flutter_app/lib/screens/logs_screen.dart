@@ -4,7 +4,7 @@
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:ymir_multiplatform/services/app_log.dart';
+import 'package:retro_saturn/services/app_log.dart';
 
 class LogsScreen extends StatefulWidget {
   const LogsScreen({super.key});

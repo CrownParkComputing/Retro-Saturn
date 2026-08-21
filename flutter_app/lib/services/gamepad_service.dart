@@ -21,8 +21,8 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 import 'package:gamepads/gamepads.dart';
-import 'package:ymir_multiplatform/ffi/ymir_bindings.dart';
-import 'package:ymir_multiplatform/ffi/ymir_core.dart';
+import 'package:retro_saturn/ffi/ymir_bindings.dart';
+import 'package:retro_saturn/ffi/ymir_core.dart';
 
 class GamepadService extends ChangeNotifier {
   final YmirCore core;

@@ -4,10 +4,10 @@
 // buttons list, per-key remap dialog).
 
 import 'package:flutter/material.dart';
-import 'package:ymir_multiplatform/data/saturn_buttons.dart';
-import 'package:ymir_multiplatform/ffi/ymir_bindings.dart';
-import 'package:ymir_multiplatform/ffi/ymir_core.dart';
-import 'package:ymir_multiplatform/widgets/peripheral_selector.dart';
+import 'package:retro_saturn/data/saturn_buttons.dart';
+import 'package:retro_saturn/ffi/ymir_bindings.dart';
+import 'package:retro_saturn/ffi/ymir_core.dart';
+import 'package:retro_saturn/widgets/peripheral_selector.dart';
 
 class InputSettingsScreen extends StatefulWidget {
   final YmirCore core;

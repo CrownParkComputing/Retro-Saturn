@@ -1,40 +1,40 @@
-// main.dart — Ymir Multiplatform app entry. Loads libymircore.{so,dylib},
+// main.dart — Retro-Saturn (formerly Ymir Multiplatform) app entry. Loads
 // creates the YmirCore, restores SMPC state + backup RAM, then routes
 // to SetupWizardScreen or WorkbenchScreen based on whether setup is
 // complete. Mirrors ViceMultiplatform's setup pattern.
 
 import 'dart:async';
-import 'dart:io';
 
 import 'package:flutter/material.dart';
-import 'package:ymir_multiplatform/ffi/ymir_bindings.dart';
-import 'package:ymir_multiplatform/ffi/ymir_core.dart';
-import 'package:ymir_multiplatform/ffi/ymir_native_paths.dart';
-import 'package:ymir_multiplatform/screens/setup_wizard_screen.dart';
-import 'package:ymir_multiplatform/screens/workbench_screen.dart';
-import 'package:ymir_multiplatform/services/app_log.dart';
-import 'package:ymir_multiplatform/services/app_prefs.dart';
-import 'package:ymir_multiplatform/services/backup_ram_service.dart';
-import 'package:ymir_multiplatform/services/smpc_state_service.dart';
-import 'package:ymir_multiplatform/services/smpc_state_service.dart';
+import 'package:retro_saturn/ffi/ymir_bindings.dart';
+import 'package:retro_saturn/ffi/ymir_core.dart';
+import 'package:retro_saturn/ffi/ymir_native_paths.dart';
+import 'package:retro_saturn/screens/setup_wizard_screen.dart';
+import 'package:retro_saturn/screens/workbench_screen.dart';
+import 'package:retro_saturn/services/app_log.dart';
+import 'package:retro_saturn/services/app_prefs.dart';
+import 'package:retro_saturn/services/backup_ram_service.dart';
+import 'package:retro_saturn/services/smpc_state_service.dart';
+import 'package:retro_saturn/services/ymir_core_paths.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  await YmirCorePaths.ensureDirs();
   await AppPrefs.load();
   await BackupRamService.ensureInit();
   await AppLog.init();
   AppLog.log('app start');
-  runApp(const YmirApp());
+  runApp(const RetroSaturnApp());
 }
 
-class YmirApp extends StatefulWidget {
-  const YmirApp({super.key});
+class RetroSaturnApp extends StatefulWidget {
+  const RetroSaturnApp({super.key});
 
   @override
-  State<YmirApp> createState() => _YmirAppState();
+  State<RetroSaturnApp> createState() => _RetroSaturnAppState();
 }
 
-class _YmirAppState extends State<YmirApp> with WidgetsBindingObserver {
+class _RetroSaturnAppState extends State<RetroSaturnApp> with WidgetsBindingObserver {
   YmirCore? _core;
   String? _loadError;
   bool? _setupCompleted;
@@ -45,8 +45,9 @@ class _YmirAppState extends State<YmirApp> with WidgetsBindingObserver {
 
   /// Saturn BIOS SMPC persistent state — restored on launch to skip the
   /// Set Clock / Set Language wizard when the user has completed it.
-  static const _smpcStatePath =
-      '/sdcard/Android/data/com.crownpark.ymir_multiplatform/files/roms/smpc_state.bin';
+  /// Resolved from [YmirCorePaths.smpcStatePath] so the path is the
+  /// same on Android, iOS and Linux.
+  String get _smpcStatePath => YmirCorePaths.smpcStatePath;
 
   @override
   void initState() {
@@ -118,7 +119,7 @@ class _YmirAppState extends State<YmirApp> with WidgetsBindingObserver {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Ymir — Sega Saturn',
+      title: 'Retro-Saturn',
       debugShowCheckedModeBanner: false,
       theme: ThemeData.dark(useMaterial3: true),
       home: _loadError != null

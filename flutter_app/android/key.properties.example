@@ -1,0 +1,22 @@
+# Release signing config for Retro-Saturn.
+#
+# Copy this file to `key.properties` (same directory) and fill in the real
+# values. `key.properties` is gitignored; the example is checked in so the
+# schema survives across checkouts.
+#
+# These four values are the same set the legacy ymir-android Play Store
+# listing was signed with. The keystore itself is registered with Play
+# Console under `com.crownpark.ymir_multiplatform` -- keeping the signing
+# key means Retro-Saturn ships as an update of the existing listing, not a
+# brand-new app, so existing users receive it automatically and reviews /
+# install counts carry over. See `android/app/build.gradle.kts` for how
+# the values are consumed.
+#
+# When `key.properties` is absent (the default on a fresh checkout), the
+# release build falls back to the debug keystore and prints a warning -- so
+# `flutter run --release` still works in dev. Real release builds for the
+# Play Store require this file.
+storeFile=/absolute/path/to/your-upload-keystore.jks
+storePassword=your-keystore-password
+keyAlias=your-key-alias
+keyPassword=your-key-password

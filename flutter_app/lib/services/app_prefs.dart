@@ -1,4 +1,4 @@
-// app_prefs.dart — SharedPreferences wrapper for ymir_multiplatform.
+// app_prefs.dart — SharedPreferences wrapper for Retro-Saturn.
 // Mirrors ViceMultiplatform's pattern: async load() at startup, key
 // constants grouped by feature. Add to this file rather than reading
 // SharedPreferences inline from screens.

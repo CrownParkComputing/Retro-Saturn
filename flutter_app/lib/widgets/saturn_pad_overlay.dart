@@ -14,9 +14,9 @@
 // AppPrefs (Phase 3) — for now we just keep it in widget state.
 
 import 'package:flutter/material.dart';
-import 'package:ymir_multiplatform/data/saturn_buttons.dart';
-import 'package:ymir_multiplatform/ffi/ymir_bindings.dart';
-import 'package:ymir_multiplatform/ffi/ymir_core.dart';
+import 'package:retro_saturn/data/saturn_buttons.dart';
+import 'package:retro_saturn/ffi/ymir_bindings.dart';
+import 'package:retro_saturn/ffi/ymir_core.dart';
 
 class SaturnPadOverlay extends StatefulWidget {
   final YmirCore core;

@@ -9,8 +9,8 @@
 
 import 'dart:io';
 
-import 'package:ymir_multiplatform/data/media_entry.dart';
-import 'package:ymir_multiplatform/services/library_scanner.dart';
+import 'package:retro_saturn/data/media_entry.dart';
+import 'package:retro_saturn/services/library_scanner.dart';
 
 class ScanResult {
   final String folderPath;

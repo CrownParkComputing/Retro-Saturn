@@ -4,8 +4,8 @@
 // of the next frame.
 
 import 'package:flutter/material.dart';
-import 'package:ymir_multiplatform/ffi/ymir_bindings.dart';
-import 'package:ymir_multiplatform/ffi/ymir_core.dart';
+import 'package:retro_saturn/ffi/ymir_bindings.dart';
+import 'package:retro_saturn/ffi/ymir_core.dart';
 
 class PeripheralSelector extends StatelessWidget {
   final YmirCore core;

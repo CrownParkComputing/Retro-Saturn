@@ -47,3 +47,14 @@ cmake-build-*/
 # Generated mig files on MacOS
 apps/ymir-sdl3/src/util/mig/a64
 apps/ymir-sdl3/src/util/mig/x64
+
+# Keystore files (release signing config). The upload keystore is registered
+# with Play Console under the com.crownpark.ymir_multiplatform listing; never
+# commit it.
+*.jks
+*.keystore
+
+# Release signing config: holds the .jks path and passwords. The .jks file
+# itself is also gitignored under *.jks above. `key.properties.example`
+# IS checked in so the schema survives across checkouts.
+flutter_app/android/key.properties

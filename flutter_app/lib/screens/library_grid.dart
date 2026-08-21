@@ -131,8 +131,14 @@ class _LibraryGridState extends State<LibraryGrid> {
     final tabs = ['All', ..._sortTabs]
         .where((t) => counts[t] != null && counts[t]! > 0)
         .toList();
-    return SizedBox(
-      height: 28,
+    return Container(
+      height: 36,
+      decoration: BoxDecoration(
+        color: const Color(0xFF0A0C12),
+        border: Border(
+          bottom: BorderSide(color: Colors.white.withValues(alpha: 0.06)),
+        ),
+      ),
       child: ListView(
         scrollDirection: Axis.horizontal,
         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
@@ -144,7 +150,7 @@ class _LibraryGridState extends State<LibraryGrid> {
               selected: tab == _filter,
               onTap: () => setState(() => _tab = tab),
             ),
-            const SizedBox(width: 3),
+            const SizedBox(width: 4),
           ],
         ],
       ),

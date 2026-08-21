@@ -1,19 +1,24 @@
 // app_log.dart — A log the user can actually send me.
 //
 // Mirrors ViceMultiplatform's AppLog. Records Dart-side events to
-// memory + a file under the app's external docs dir, with optional
-// stdout/stderr capture for the native side (iOS only — Android goes
-// to logcat instead, where adb is enough).
+// memory + a file under the app's per-platform data dir.
 //
-// The log lives in the app's external files dir, which the user can
-// reach via the system Files app on Android (Android/data/<pkg>/files)
-// or via the iOS Files app (when UIFileSharingEnabled is set). A log
-// the user cannot get at is not a bug report.
+// The log file lives at [YmirCorePaths.appLogPath] -- the same
+// platform-agnostic data dir the NVRAM + SMPC state + session
+// snapshot files live in. The user grabs it via the in-app Logs
+// screen (which renders the in-memory tail + reads the file back),
+// which is the access path that works identically on Android, iOS,
+// and Linux. The previous incarnation wrote to the Android external
+// files dir so the file showed up in the Files app, which was the
+// right thing for Android but iOS-specific support (UIFileSharingEnabled
+// + LSSupportsOpeningDocumentsInPlace) made the iOS twin awkward,
+// and Linux has no equivalent.
 
 import 'dart:async';
 import 'dart:io';
 
 import 'package:path/path.dart' as p;
+import 'package:retro_saturn/services/ymir_core_paths.dart';
 
 class AppLog {
   AppLog._();
@@ -29,18 +34,19 @@ class AppLog {
   /// Where the log file lives, once [init] has run.
   static String? get filePath => _filePath;
 
-  /// One-shot setup. Idempotent. Writes to the app's private external
-  /// storage dir (`/sdcard/Android/data/<pkg>/files/logs/`) so the log
-  /// is reachable from the system Files app on Android, and from a
-  /// `run-as` shell on debuggable builds.
+  /// One-shot setup. Idempotent. Resolves the per-platform data dir
+  /// via [YmirCorePaths], then ensures the `logs/` subdir exists.
+  /// [YmirCorePaths.ensureDirs] runs at app startup so the dir is
+  /// already there; this is the safety net.
   static Future<void> init() async {
     if (_initialized) return;
     _initialized = true;
     try {
-      final base = '/sdcard/Android/data/com.crownpark.ymir_multiplatform/files';
-      final logsDir = Directory(p.join(base, 'logs'));
-      if (!logsDir.existsSync()) await logsDir.create(recursive: true);
-      _filePath = p.join(logsDir.path, 'ymir-multiplatform.log');
+      await YmirCorePaths.ensureDirs();
+      final path = YmirCorePaths.appLogPath;
+      final dir = Directory(p.dirname(path));
+      if (!dir.existsSync()) await dir.create(recursive: true);
+      _filePath = path;
     } catch (e) {
       _append('log init failed: $e');
     }

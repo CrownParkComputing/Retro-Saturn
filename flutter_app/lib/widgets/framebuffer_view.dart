@@ -10,7 +10,7 @@ import 'dart:typed_data';
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
-import 'package:ymir_multiplatform/ffi/ymir_core.dart';
+import 'package:retro_saturn/ffi/ymir_core.dart';
 
 class FramebufferView extends StatefulWidget {
   final YmirCore core;

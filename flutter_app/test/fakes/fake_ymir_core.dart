@@ -8,8 +8,8 @@ import 'dart:ffi';
 import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart';
-import 'package:ymir_multiplatform/ffi/ymir_bindings.dart';
-import 'package:ymir_multiplatform/ffi/ymir_core.dart';
+import 'package:retro_saturn/ffi/ymir_bindings.dart';
+import 'package:retro_saturn/ffi/ymir_core.dart';
 
 class FakeYmirCore extends ChangeNotifier implements YmirCore {
   @override

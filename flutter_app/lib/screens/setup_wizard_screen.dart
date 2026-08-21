@@ -5,9 +5,9 @@
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
-import 'package:ymir_multiplatform/data/media_entry.dart';
-import 'package:ymir_multiplatform/services/app_prefs.dart';
-import 'package:ymir_multiplatform/services/setup_scan_service.dart';
+import 'package:retro_saturn/data/media_entry.dart';
+import 'package:retro_saturn/services/app_prefs.dart';
+import 'package:retro_saturn/services/setup_scan_service.dart';
 
 class SetupWizardScreen extends StatefulWidget {
   final VoidCallback onComplete;
