@@ -58,3 +58,10 @@ apps/ymir-sdl3/src/util/mig/x64
 # itself is also gitignored under *.jks above. `key.properties.example`
 # IS checked in so the schema survives across checkouts.
 flutter_app/android/key.properties
+
+# iOS: the core framework is a build product, installed by
+# native/ymir_core/ios/build-ios-macos.sh into the tree the Runner embeds from.
+flutter_app/ios/Frameworks/
+flutter_app/ios/Flutter/Generated.xcconfig
+flutter_app/ios/Flutter/flutter_export_environment.sh
+flutter_app/ios/Pods/

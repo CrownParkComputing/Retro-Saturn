@@ -149,23 +149,49 @@ jobs:
         with:
           channel: stable
           flutter-version: "3.41.9"
-      - name: Cross-build iOS arm64 device slice via Docker
-        run: tools/build-ios-linux.sh
-      - name: Build iOS Simulator slice (Mac-only step)
+      # Built natively, on the Mac, with Xcode's own toolchain.
+      #
+      # This used to shell out to tools/build-ios-linux.sh, which drove the
+      # mobaiapp/iosbox Docker image -- a path that could never run here.
+      # macOS runners have no Docker (the failure was a bare `docker: command
+      # not found`), and moving it to a Linux runner would not have helped
+      # either: that image also wants an iOS SDK volume populated by hand from
+      # an Xcode extraction. A Mac already has the SDK, so nothing needs to be
+      # cross-anything. The script installs the framework into
+      # flutter_app/ios/Frameworks, which is where the Runner embeds it from.
+      - name: Build YmirCore.framework for iOS arm64
+        run: native/ymir_core/ios/build-ios-macos.sh
+
+      - name: Verify the framework was produced
         run: |
-          if [ -d "$HOME/AndroidStudioProjects/Ymir/libs/ymir-core" ]; then
-            native/ymir_core/ios/build-core-simulator.sh
-          else
-            echo "::warning::Skipping iOS simulator slice (upstream ymir-core not present)"
+          fw=flutter_app/ios/Frameworks/YmirCore.framework
+          if [ ! -f "$fw/YmirCore" ]; then
+            echo "::error::$fw/YmirCore is missing -- the core build did not install it."
+            exit 1
           fi
-      - run: |
-          mkdir -p flutter_app/ios/Frameworks
-          cp -R native/ymir_core/ios/build/YmirCore.framework \
-              flutter_app/ios/Frameworks/
-          cp native/ymir_core/ios/build/libymircore.dylib \
-              flutter_app/ios/Frameworks/
+          file "$fw/YmirCore"
+          case "$(file -b "$fw/YmirCore")" in
+            *arm64*) ;;
+            *) echo "::error::YmirCore is not arm64 -- a simulator slice was built"; exit 1 ;;
+          esac
+
       - run: flutter build ios --release --no-codesign
         working-directory: flutter_app
+
+      # An app that builds but ships no core installs fine and then dies at
+      # the first dlopen, which reads as a signing fault and is not one. Prove
+      # the embed phase actually ran, at the exact path
+      # YmirNativePaths.iosFrameworkLibrary() opens at runtime.
+      - name: Verify the core is embedded in the app
+        run: |
+          app=flutter_app/build/ios/iphoneos/Runner.app
+          binary="$app/Frameworks/YmirCore.framework/YmirCore"
+          if [ ! -f "$binary" ]; then
+            echo "::error::YmirCore.framework is missing from $app/Frameworks --"
+            echo "::error::the Runner target's Embed Frameworks phase did not copy it."
+            exit 1
+          fi
+          file "$binary"
       - uses: actions/upload-artifact@v4
         with:
           name: ios-app
