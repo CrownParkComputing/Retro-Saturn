@@ -69,7 +69,8 @@ android {
     // on the build machine happens to default to, which is how Play
     // compliance ends up depending on which laptop or runner did the build.
     compileSdk = 36
-    ndkVersion = flutter.ndkVersion
+    // The NDK the prebuilt cores were compiled with.
+    ndkVersion = "28.2.13676358"
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
@@ -87,7 +88,14 @@ android {
         // already lives. Changing it would mean publishing as a brand-new
         // app; existing installs would not auto-update. Pick once and keep.
         applicationId = "com.crownpark.ymir_multiplatform"
-        minSdk = flutter.minSdkVersion
+        // 26, matching the API the native core is actually built against
+        // (native/ymir_core/android/build.sh, ANDROID_API=26).
+        //
+        // This was flutter.minSdkVersion, which is 24. The app therefore
+        // declared support for API 24 and 25 devices that could never run it:
+        // the core is compiled for 26, so it installs and then fails to load.
+        // minSdk is not a free choice here, it is whatever the core needs.
+        minSdk = 26
         // Play requires the target to stay within a year of the latest
         // Android release - 36 or higher from 31 August 2026 - and refuses
         // updates outright below that. flutter.targetSdkVersion floats with
