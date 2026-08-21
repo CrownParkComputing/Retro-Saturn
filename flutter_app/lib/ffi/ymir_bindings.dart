@@ -356,8 +356,7 @@ class YmirCoreBindings {
   int loadState(ffi.Pointer<ffi.Uint8> p, String path) {
     final cstr = path.toNativeUtf8();
     try {
-      final raw = _loadState(p, cstr);
-      return (raw is int) ? raw : 0;
+      return _loadState(p, cstr);
     } finally {
       calloc.free(cstr);
     }
@@ -366,8 +365,7 @@ class YmirCoreBindings {
   int swapState(ffi.Pointer<ffi.Uint8> p, String path) {
     final cstr = path.toNativeUtf8();
     try {
-      final raw = _swapState(p, cstr);
-      return (raw is int) ? raw : 0;
+      return _swapState(p, cstr);
     } finally {
       calloc.free(cstr);
     }

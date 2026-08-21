@@ -49,7 +49,6 @@ class _WorkbenchScreenState extends State<WorkbenchScreen> {
   WorkbenchCategory _category = WorkbenchCategory.games;
   String _biosPath = '';
   String _gamesFolder = '';
-  bool _pathsLoaded = false;
 
   /// The game the user tapped to launch. Held so the in-panel EmulatorScreen
   /// can call `loadDisc(entry.path)` -- the disc never loads if this is null
@@ -73,6 +72,18 @@ class _WorkbenchScreenState extends State<WorkbenchScreen> {
 
   /// True when the emulator screen is on top of the workbench.
   bool _inEmulator = false;
+
+  /// Identity for the running emulator view, so it SURVIVES being moved.
+  ///
+  /// Fullscreen draws it inside a Stack and windowed draws it inside a
+  /// Column. Those are different positions in the tree, and without a stable
+  /// key Flutter treats the move as a destroy and a create: EmulatorScreen's
+  /// dispose() writes NVRAM and drops the gamepad, and the new initState()
+  /// reloads the BIOS and the disc. Toggling the rail rebooted the Saturn.
+  ///
+  /// A GlobalKey makes it the same element in a new place instead, so the
+  /// session carries on through the toggle.
+  final GlobalKey _emulatorKey = GlobalKey();
 
   /// Whether the in-game chrome is on screen. It hides itself a few seconds
   /// after the last touch: a Saturn frame on a widescreen handheld has no
@@ -119,7 +130,6 @@ class _WorkbenchScreenState extends State<WorkbenchScreen> {
     setState(() {
       _biosPath = b;
       _gamesFolder = g;
-      _pathsLoaded = true;
     });
   }
 
@@ -663,6 +673,7 @@ class _WorkbenchScreenState extends State<WorkbenchScreen> {
               border: Border.all(color: SaturnColors.panelStroke),
             ),
       child: EmulatorScreen(
+        key: _emulatorKey,
         core: widget.core,
         biosPath: _biosPath,
         gamesFolder: _gamesFolder,

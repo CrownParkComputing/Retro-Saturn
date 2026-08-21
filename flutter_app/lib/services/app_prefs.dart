@@ -13,18 +13,10 @@ class AppPrefs {
 
   // On-screen pad / input
   static const _leftHandedKey = 'left_handed';
-  static const _padModeKey = 'on_screen_pad_mode';
-  static const _joystickPortKey = 'joystick_port';
 
   // Video
-  static const _aspectModeKey = 'aspect_mode';
   static const _crtEnabledKey = 'crt_enabled';
   static const _bezelEnabledKey = 'bezel_enabled';
-  static const _rotationKey = 'rotation';
-
-  // Audio
-  static const _audioMutedKey = 'audio_muted';
-  static const _audioVolumeKey = 'audio_volume';
 
   static SharedPreferences? _prefs;
 

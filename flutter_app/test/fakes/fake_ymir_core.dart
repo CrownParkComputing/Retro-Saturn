@@ -17,13 +17,13 @@ class FakeYmirCore extends ChangeNotifier implements YmirCore {
 
   // Recorded calls
   final List<String> calls = [];
-  int _fps = 60;
-  int _audioLevel = 0;
-  String _status = 'fake';
+  final int _fps = 60;
+  final int _audioLevel = 0;
+  final String _status = 'fake';
   bool _paused = false;
   bool _muted = false;
-  int _width = 320;
-  int _height = 224;
+  final int _width = 320;
+  final int _height = 224;
   Uint32List? _frame;
   final List<({int port, YmirButton button, bool pressed})> padEvents = [];
   final List<({int port, YmirPeripheralType type})> peripheralEvents = [];
@@ -43,7 +43,12 @@ class FakeYmirCore extends ChangeNotifier implements YmirCore {
   }
 
   @override
-  void dispose() => calls.add('dispose');
+  void dispose() {
+    calls.add('dispose');
+    // ChangeNotifier.dispose is @mustCallSuper: skipping it leaves the
+    // listener list alive for the rest of the test run.
+    super.dispose();
+  }
 
   @override
   int loadBios(String path) { calls.add('loadBios:$path'); return 0; }

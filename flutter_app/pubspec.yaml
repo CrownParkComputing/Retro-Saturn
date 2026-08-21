@@ -22,6 +22,7 @@ dependencies:
   http: ^1.6.0
   archive: ^4.0.9
 
+  crypto: any
 dev_dependencies:
   flutter_test:
     sdk: flutter

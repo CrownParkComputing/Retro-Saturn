@@ -5,7 +5,6 @@
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
-import 'package:retro_saturn/data/media_entry.dart';
 import 'package:retro_saturn/services/app_prefs.dart';
 import 'package:retro_saturn/services/setup_scan_service.dart';
 
@@ -99,7 +98,7 @@ class _SetupWizardScreenState extends State<SetupWizardScreen> {
           const Text('No BIOS or games found.',
               style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
           const SizedBox(height: 4),
-          Text('$_folder',
+          Text(_folder,
               style: const TextStyle(fontSize: 11, color: Colors.white54),
               maxLines: 1, overflow: TextOverflow.ellipsis),
           const SizedBox(height: 8),

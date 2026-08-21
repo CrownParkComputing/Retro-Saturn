@@ -14,7 +14,6 @@
 // AppPrefs (Phase 3) — for now we just keep it in widget state.
 
 import 'package:flutter/material.dart';
-import 'package:retro_saturn/data/saturn_buttons.dart';
 import 'package:retro_saturn/ffi/ymir_bindings.dart';
 import 'package:retro_saturn/ffi/ymir_core.dart';
 
@@ -43,7 +42,11 @@ class _SaturnPadOverlayState extends State<SaturnPadOverlay> {
   final Set<int> _pressed = {};
 
   void _press(YmirButton b, bool down) {
-    if (down) _pressed.add(b.value); else _pressed.remove(b.value);
+    if (down) {
+      _pressed.add(b.value);
+    } else {
+      _pressed.remove(b.value);
+    }
     widget.core.setPadButton(widget.port, b, down);
     setState(() {});
   }
@@ -73,9 +76,13 @@ class _SaturnPadOverlayState extends State<SaturnPadOverlay> {
             final h = MediaQuery.of(context).size.height - size.height;
             final nx = (frac.dx + d.delta.dx / (w <= 0 ? 1 : w)).clamp(0.0, 1.0);
             final ny = (frac.dy + d.delta.dy / (h <= 0 ? 1 : h)).clamp(0.0, 1.0);
-            if (identical(build, _buildDpad)) _dpad = Offset(nx, ny);
-            else if (identical(build, _buildFace)) _face = Offset(nx, ny);
-            else _triggers = Offset(nx, ny);
+            if (identical(build, _buildDpad)) {
+              _dpad = Offset(nx, ny);
+            } else if (identical(build, _buildFace)) {
+              _face = Offset(nx, ny);
+            } else {
+              _triggers = Offset(nx, ny);
+            }
           });
         },
         child: Container(

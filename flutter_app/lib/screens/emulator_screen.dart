@@ -53,7 +53,6 @@ class EmulatorScreen extends StatefulWidget {
 
 class _EmulatorScreenState extends State<EmulatorScreen> {
   GamepadService? _gamepad;
-  String _lastResult = 'starting…';
   String _currentDisc = '';
 
   @override
@@ -87,23 +86,18 @@ class _EmulatorScreenState extends State<EmulatorScreen> {
     final entry = widget.entry;
 
     if (biosPath != null && File(biosPath).existsSync()) {
-      setState(() => _lastResult = 'loading BIOS…');
       AppLog.log('loadBios: $biosPath');
       final rc = widget.core.loadBios(biosPath);
       AppLog.log('loadBios rc=$rc');
-      setState(() => _lastResult = 'BIOS rc=$rc');
     } else {
       AppLog.log('loadBios: skipped (${biosPath == null ? "no path" : "missing file"})');
-      setState(() => _lastResult = 'no BIOS (run setup)');
     }
 
     if (entry != null && File(entry.path).existsSync()) {
       _currentDisc = entry.path;
-      setState(() => _lastResult = 'loading disc…');
       AppLog.log('loadDisc: ${entry.path}');
       final rc = widget.core.loadDisc(entry.path);
       AppLog.log('loadDisc rc=$rc');
-      setState(() => _lastResult = 'disc rc=$rc (${entry.displayName})');
 
       // Restore NVRAM (Saturn backup RAM). Wrapped — a missing or
       // corrupt save file is fine (returns false), but a hard error
@@ -122,7 +116,6 @@ class _EmulatorScreenState extends State<EmulatorScreen> {
       AppLog.log('NVRAM auto-save started (60s interval)');
     }
 
-    setState(() => _lastResult = 'running (${widget.core.status})');
     AppLog.log('emulator running: ${widget.core.status} @ ${widget.core.fps}fps');
   }
 

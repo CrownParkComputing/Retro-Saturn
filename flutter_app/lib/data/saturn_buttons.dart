@@ -34,8 +34,11 @@ class SaturnPadMask {
 
   static int set(int mask, YmirButton button, bool pressed) {
     final bit = 1 << button.value;
-    if (pressed) return mask & ~bit;
-    else return mask | bit;
+    if (pressed) {
+      return mask & ~bit;
+    } else {
+      return mask | bit;
+    }
   }
 
   static bool isPressed(int mask, YmirButton button) =>

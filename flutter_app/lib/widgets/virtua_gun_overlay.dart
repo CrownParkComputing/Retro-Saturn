@@ -8,7 +8,6 @@
 // which games use to detect "shot fired while off-screen = miss/reload".
 
 import 'package:flutter/material.dart';
-import 'package:retro_saturn/ffi/ymir_bindings.dart';
 import 'package:retro_saturn/ffi/ymir_core.dart';
 
 class VirtuaGunOverlay extends StatefulWidget {

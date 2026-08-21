@@ -30,7 +30,7 @@ class GamepadService extends ChangeNotifier {
 
   StreamSubscription? _sub;
   bool _disposed = false;
-  bool _connected = false;
+  final bool _connected = false;
 
   /// 16-bit Saturn mask. 1 = released (Ymir convention).
   int _mask = 0xFFFF;
@@ -78,13 +78,17 @@ class GamepadService extends ChangeNotifier {
     }
 
     final axis = event.axis;
-    if (axis == GamepadAxis.leftStickX) _stickX = event.value;
-    else if (axis == GamepadAxis.leftStickY) _stickY = event.value;
-    else if (axis == GamepadAxis.rightTrigger) {
+    if (axis == GamepadAxis.leftStickX) {
+      _stickX = event.value;
+    } else if (axis == GamepadAxis.leftStickY) {
+      _stickY = event.value;
+    } else if (axis == GamepadAxis.rightTrigger) {
       _triggerPressed = event.value > 0.5;
     } else if (axis == GamepadAxis.leftTrigger) {
       _startPressed = event.value > 0.5;
-    } else return;
+    } else {
+      return;
+    }
 
     _pushStickAsAnalog();
   }
@@ -95,8 +99,11 @@ class GamepadService extends ChangeNotifier {
 
   void _setBit(YmirButton b, bool down) {
     final mask = (1 << b.value);
-    if (down) _mask &= ~mask;
-    else      _mask |= mask;
+    if (down) {
+      _mask &= ~mask;
+    } else {
+      _mask |= mask;
+    }
     _maskChanges.add(_mask);
     core.setPadButton(port, b, down);
     notifyListeners();
