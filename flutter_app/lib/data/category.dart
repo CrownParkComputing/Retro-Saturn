@@ -7,7 +7,7 @@
 //
 //   0  where you go        Games
 //   1  how it is set up    Paths, Audio, Input
-//   2  everything else     Memories, About  (pinned to the bottom)
+//   2  everything else     Memories, Compliance, About  (pinned to the bottom)
 //
 // Logs used to be its own destination; it is now a sub-section of
 // About (see about_screen.dart). The runtime info that used to live
@@ -28,6 +28,7 @@ enum WorkbenchCategory {
   audio('🔊', 'Audio', 1),
   input('🕹️', 'Input', 1),
   history('📜', 'Memories', 2),
+  compliance('✅', 'Compliance', 2),
   about('ℹ️', 'About', 2);
 
   final String icon;

@@ -23,6 +23,7 @@ import 'package:retro_saturn/data/peripheral_type.dart';
 import 'package:retro_saturn/ffi/ymir_core.dart';
 import 'package:retro_saturn/screens/about_screen.dart';
 import 'package:retro_saturn/screens/audio_settings_screen.dart';
+import 'package:retro_saturn/screens/compliance_screen.dart';
 import 'package:retro_saturn/screens/emulator_screen.dart';
 import 'package:retro_saturn/screens/history_screen.dart';
 import 'package:retro_saturn/screens/input_settings_screen.dart';
@@ -231,6 +232,8 @@ class _WorkbenchScreenState extends State<WorkbenchScreen> {
         return InputSettingsScreen(core: widget.core);
       case WorkbenchCategory.history:
         return const HistoryScreen();
+      case WorkbenchCategory.compliance:
+        return ComplianceScreen(onRerunSetup: widget.onRerunSetup);
       case WorkbenchCategory.about:
         return const AboutScreen();
     }
