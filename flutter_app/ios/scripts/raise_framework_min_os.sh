@@ -36,6 +36,17 @@ set -eu
 APP="${CODESIGNING_FOLDER_PATH:-${TARGET_BUILD_DIR:-}/${WRAPPER_NAME:-}}"
 MIN="${IPHONEOS_DEPLOYMENT_TARGET:-15.0}"
 
+# vtool needs the platform this build is FOR, not "ios" always. Rewriting a
+# simulator binary as ios is not a cosmetic error: dyld refuses to load it
+# ("incompatible platform (have 'iOS', need 'iOS-simulator')"), so hardcoding
+# ios here made every simulator build of this app unlaunchable -- the engine
+# and both cores were re-stamped on the way into the bundle, after being
+# staged correctly.
+case "${PLATFORM_NAME:-iphoneos}" in
+  iphonesimulator) VTOOL_PLATFORM=iossim ;;   # vtool spells it "iossim"
+  *)               VTOOL_PLATFORM=ios ;;
+esac
+
 [ -n "$APP" ] && [ -d "$APP/Frameworks" ] || {
   echo "note: no embedded frameworks to patch"
   exit 0
@@ -57,7 +68,7 @@ resign() {
 # -replace rewrites an existing LC_BUILD_VERSION rather than appending a second
 # one, which would make the binary invalid.
 set_min() {
-  xcrun vtool -set-build-version ios "$MIN" "$MIN" -replace \
+  xcrun vtool -set-build-version "$VTOOL_PLATFORM" "$MIN" "$MIN" -replace \
     -output "$1" "$1" >/dev/null
 }
 

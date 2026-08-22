@@ -59,9 +59,15 @@ apps/ymir-sdl3/src/util/mig/x64
 # IS checked in so the schema survives across checkouts.
 flutter_app/android/key.properties
 
-# iOS: the core framework is a build product, installed by
-# native/ymir_core/ios/build-ios-macos.sh into the tree the Runner embeds from.
-flutter_app/ios/Frameworks/
+# iOS: the core is COMMITTED, not ignored -- the same as Retro-C64 and
+# Retro-Amiga do with theirs. Xcode Cloud cannot build it: the native build
+# needs the vendored submodules and a long CMake pass, neither of which exists
+# in Apple's build image. An ignored core means the cloud build produces an app
+# that installs and then dies at dlopen.
+#
+# Build it with native/ymir_core/ios/build-ios-macos.sh (device) and the
+# iphonesimulator sysroot variant, then package both as the xcframework.
+!flutter_app/ios/Frameworks/
 flutter_app/ios/Flutter/Generated.xcconfig
 flutter_app/ios/Flutter/flutter_export_environment.sh
 flutter_app/ios/Pods/
