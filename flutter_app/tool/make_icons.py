@@ -21,7 +21,21 @@ from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 LOGO = os.path.join(HERE, "assets", "images", "retro_recomp_logo.png")
-FONT = "/usr/share/fonts/liberation/LiberationSans-Bold.ttf"
+# Liberation Sans Bold where it exists, Arial Bold on a Mac. The two are
+# metrically compatible by design, so the icon renders the same either way --
+# which matters, because this script is the only thing that draws the family's
+# icons and it must not produce a different one depending on who ran it.
+FONT_CANDIDATES = [
+    "/usr/share/fonts/liberation/LiberationSans-Bold.ttf",
+    "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
+    "/System/Library/Fonts/Supplemental/Arial Bold.ttf",
+    "/Library/Fonts/Arial Bold.ttf",
+]
+FONT = next((f for f in FONT_CANDIDATES if os.path.exists(f)), None)
+if FONT is None:
+    raise SystemExit(
+        "no usable bold sans font found; looked for:\n  "
+        + "\n  ".join(FONT_CANDIDATES))
 
 SIZE = 1024
 

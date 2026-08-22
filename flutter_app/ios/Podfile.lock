@@ -1,0 +1,22 @@
+PODS:
+  - Flutter (1.0.0)
+  - gamepads_ios (0.1.1):
+    - Flutter
+
+DEPENDENCIES:
+  - Flutter (from `Flutter`)
+  - gamepads_ios (from `.symlinks/plugins/gamepads_ios/ios`)
+
+EXTERNAL SOURCES:
+  Flutter:
+    :path: Flutter
+  gamepads_ios:
+    :path: ".symlinks/plugins/gamepads_ios/ios"
+
+SPEC CHECKSUMS:
+  Flutter: 71a624a5bc0c04062bf19101d501e466baf2fb47
+  gamepads_ios: c75c6d31377d275b0effb9174c619e2705678c09
+
+PODFILE CHECKSUM: 3ba3a73b1b12adcf321a227a745625fe0888cc82
+
+COCOAPODS: 1.16.2
