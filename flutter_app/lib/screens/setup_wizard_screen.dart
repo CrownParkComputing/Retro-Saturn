@@ -6,6 +6,8 @@
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:retro_saturn/services/app_prefs.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:retro_saturn/data/friendly_path.dart';
 import 'package:retro_saturn/services/setup_scan_service.dart';
 import 'package:retro_saturn/screens/compliance_screen.dart';
 
@@ -20,8 +22,14 @@ class SetupWizardScreen extends StatefulWidget {
 class _SetupWizardScreenState extends State<SetupWizardScreen> {
   bool _busy = false;
   bool _scanned = false;
+
+  /// The scan folder as a Files-app location. The real path stays in [_folder]
+  /// because the scanner needs it; this is the only thing shown. A container
+  /// path is somewhere the user cannot go, and printing it also put the build
+  /// machine's directory layout -- account name and all -- into a screenshot
+  /// of this screen.
+  String _folderShown = '';
   ScanResult? _result;
-  String _folder = '';
 
   @override
   void initState() {
@@ -35,7 +43,7 @@ class _SetupWizardScreenState extends State<SetupWizardScreen> {
     if (initial == null) {
       setState(() {
         _scanned = true;
-        _folder = '(no folder selected)';
+        _folderShown = '(no folder selected)';
       });
       return;
     }
@@ -43,9 +51,11 @@ class _SetupWizardScreenState extends State<SetupWizardScreen> {
   }
 
   Future<void> _scanFolder(String path) async {
+    final docs = await getApplicationDocumentsDirectory();
+    if (!mounted) return;
     setState(() {
       _busy = true;
-      _folder = path;
+      _folderShown = friendlyPath(path, docs.path);
     });
     final r = await SetupScanService.scan(path);
     if (!mounted) return;
@@ -99,9 +109,9 @@ class _SetupWizardScreenState extends State<SetupWizardScreen> {
           const Text('No BIOS or games found.',
               style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
           const SizedBox(height: 4),
-          Text(_folder,
+          Text(_folderShown,
               style: const TextStyle(fontSize: 11, color: Colors.white54),
-              maxLines: 1, overflow: TextOverflow.ellipsis),
+              maxLines: 2, overflow: TextOverflow.ellipsis),
           const SizedBox(height: 12),
           // Spelled out step by step rather than as a path template. A Saturn
           // cannot start without its BIOS -- unlike the C64 and Amiga apps
@@ -164,9 +174,9 @@ class _SetupWizardScreenState extends State<SetupWizardScreen> {
           const Icon(Icons.search, size: 14, color: Colors.white54),
           const SizedBox(width: 6),
           Expanded(
-            child: Text(_folder,
+            child: Text(_folderShown,
                 style: const TextStyle(fontSize: 11, color: Colors.white54),
-                maxLines: 1, overflow: TextOverflow.ellipsis),
+                maxLines: 2, overflow: TextOverflow.ellipsis),
           ),
         ]),
         const SizedBox(height: 8),
