@@ -3,6 +3,12 @@
 // constants grouped by feature. Add to this file rather than reading
 // SharedPreferences inline from screens.
 
+import 'dart:io';
+
+import 'package:flutter/foundation.dart' show visibleForTesting;
+
+import 'package:path/path.dart' as p;
+import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 class AppPrefs {
@@ -25,6 +31,12 @@ class AppPrefs {
   static Future<void> load() async {
     _prefs ??= await SharedPreferences.getInstance();
   }
+
+  /// Drops the cached instance so a freshly installed mock store takes effect.
+  /// [load] is deliberately idempotent, which means a test that swaps the
+  /// backing store mid-run would otherwise keep reading the previous one.
+  @visibleForTesting
+  static void resetForTest() => _prefs = null;
 
   static SharedPreferences get _p {
     if (_prefs == null) {
@@ -62,11 +74,77 @@ class AppPrefs {
   static Future<bool> isSetupCompleted() async => _p.getBool(_setupCompletedKey) ?? false;
   static Future<void> setSetupCompleted(bool v) => _p.setBool(_setupCompletedKey, v);
 
-  static Future<String?> getBiosPath() async => _p.getString(_biosPathKey);
-  static Future<void> setBiosPath(String p) => _p.setString(_biosPathKey, p);
 
-  static Future<String?> getGamesFolder() async => _p.getString(_gamesFolderKey);
-  static Future<void> setGamesFolder(String p) => _p.setString(_gamesFolderKey, p);
+  // ---- container-relative paths ----
+  //
+  // iOS does not guarantee the app's data container keeps its UUID. It is
+  //   .../Application/<UUID>/Documents/...
+  // and that UUID is reassigned on reinstall, and on restore from a backup or
+  // migration to a new device. An absolute path saved into SharedPreferences
+  // therefore points at a directory that no longer exists, and nothing reports
+  // it: the BIOS is simply "not found" and the shelf is simply empty, on an
+  // install where the user did nothing wrong and their files are still there.
+  //
+  // Observed exactly that: the wizard had stored
+  //   .../Application/4B4EC4AE-.../Documents/Retro-Saturn
+  // while the app was running out of 11377381-. Apple's guidance is explicit
+  // that container paths must not be persisted, only re-derived.
+  //
+  // So a path inside Documents is stored relative to it and rejoined on read.
+  // A path outside Documents is stored as-is: it is somebody else's directory
+  // and not ours to rewrite.
+  static const _docsPrefix = '@documents/';
+
+  static Future<String> _docsDir() async =>
+      (await getApplicationDocumentsDirectory()).path;
+
+  static Future<String> _portable(String abs) async {
+    final docs = await _docsDir();
+    if (p.equals(docs, abs)) return _docsPrefix;
+    if (p.isWithin(docs, abs)) return _docsPrefix + p.relative(abs, from: docs);
+    return abs;
+  }
+
+  static bool _exists(String path) =>
+      File(path).existsSync() || Directory(path).existsSync();
+
+  static Future<String> _resolve(String stored) async {
+    if (stored.startsWith(_docsPrefix)) {
+      final rest = stored.substring(_docsPrefix.length);
+      final docs = await _docsDir();
+      return rest.isEmpty ? docs : p.join(docs, rest);
+    }
+    // Written by a build that stored absolutes. If it still resolves, leave it
+    // alone -- it may legitimately live outside the container. If it does not,
+    // try the same tail under today's Documents before giving up, which is the
+    // stale-container case and recovers the user's setup silently.
+    if (!_exists(stored)) {
+      const marker = '/Documents/';
+      final i = stored.lastIndexOf(marker);
+      if (i != -1) {
+        final rebased =
+            p.join(await _docsDir(), stored.substring(i + marker.length));
+        if (_exists(rebased)) return rebased;
+      }
+    }
+    return stored;
+  }
+
+  static Future<String?> getBiosPath() async {
+    final v = _p.getString(_biosPathKey);
+    return v == null ? null : _resolve(v);
+  }
+
+  static Future<void> setBiosPath(String path) async =>
+      _p.setString(_biosPathKey, await _portable(path));
+
+  static Future<String?> getGamesFolder() async {
+    final v = _p.getString(_gamesFolderKey);
+    return v == null ? null : _resolve(v);
+  }
+
+  static Future<void> setGamesFolder(String path) async =>
+      _p.setString(_gamesFolderKey, await _portable(path));
 
   // ---- input ----
   static bool get leftHanded => _p.getBool(_leftHandedKey) ?? false;
