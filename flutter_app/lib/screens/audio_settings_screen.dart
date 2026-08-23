@@ -94,7 +94,6 @@ class _AudioLevelBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final pct = (level.clamp(0, 100)) / 100.0;
     return Container(
       height: 18,
       decoration: BoxDecoration(
@@ -102,12 +101,11 @@ class _AudioLevelBar extends StatelessWidget {
         borderRadius: BorderRadius.circular(3),
       ),
       clipBehavior: Clip.antiAlias,
-      child: Row(children: [
-        AnimatedFractionallySizedBox(
-          duration: const Duration(milliseconds: 100),
-          widthFactor: muted ? 0 : pct,
-          heightFactor: 1,
-          child: Container(
+      child: LayoutBuilder(
+        builder: (context, constraints) => Row(children: [
+          AnimatedContainer(
+            duration: const Duration(milliseconds: 100),
+            width: audioBarFillWidth(constraints.maxWidth, level, muted),
             decoration: BoxDecoration(
               gradient: const LinearGradient(
                 colors: [Color(0xFF4040E0), Color(0xFF60A0FF)],
@@ -115,8 +113,30 @@ class _AudioLevelBar extends StatelessWidget {
               borderRadius: BorderRadius.circular(3),
             ),
           ),
-        ),
-      ]),
+        ]),
+      ),
     );
   }
+}
+
+/// Width of the filled part of the level meter.
+///
+/// Computed rather than expressed as a fraction, because a fraction is what
+/// broke it. AnimatedFractionallySizedBox multiplies the incoming maxWidth by
+/// the factor, and this bar can be handed an unbounded width -- at which point
+/// a level of zero makes that `infinity * 0.0`, which is NaN, and layout dies
+/// with "BoxConstraints has NaN values in minWidth and maxWidth".
+///
+/// Zero is not a rare case either: the level is zero whenever nothing is
+/// playing, so the screen was at its most fragile on a machine that had not
+/// been started -- which is the state a store reviewer opens it in.
+///
+/// An unbounded width has no honest fraction, so the bar falls back to a fixed
+/// size and stays readable instead of taking the whole scroll extent.
+double audioBarFillWidth(double maxWidth, int level, bool muted) {
+  if (muted) return 0;
+  final pct = level.clamp(0, 100) / 100.0;
+  const fallback = 240.0;
+  final width = maxWidth.isFinite ? maxWidth : fallback;
+  return width * pct;
 }
