@@ -79,3 +79,10 @@ bios/
 ipl/
 roms/ipl/
 saturn_bios*
+
+# Exception: the free/homebrew demo in tools/test-roms/homebrew/ IS meant to
+# ship so reviewers can boot the emulator without any commercial/licensed
+# content. It is a SegaXtreme homebrew-competition release (Pixel Poppy Pong),
+# not Sega's copyrighted BIOS.
+!tools/test-roms/homebrew/
+!tools/test-roms/homebrew/**
