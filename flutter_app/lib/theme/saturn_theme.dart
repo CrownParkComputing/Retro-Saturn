@@ -41,7 +41,14 @@ class SaturnMetrics {
   /// Sidebar width — measured from widest entry title in
   /// WorkbenchCategory, clamped to these bounds. The Retroid Flip2's
   /// 456dp-tall landscape has plenty of room for a 180dp rail.
-  static const double sidebarMinWidth = 120.0;
+  /// Floor for the rail.
+  ///
+  /// 128, not 120, because the floor has to clear the widest label the rail
+  /// actually carries: "Compliance" needs about 122pt once the icon column and
+  /// side padding are counted. At 120 the longest entry rendered as
+  /// "Complian..." on every screen of every phone -- and so in every store
+  /// screenshot -- while looking like a deliberate width.
+  static const double sidebarMinWidth = 128.0;
 
   /// Upper bound for the measured rail, never below [sidebarMinWidth].
   ///
@@ -56,8 +63,16 @@ class SaturnMetrics {
   /// takes its minimum and gives up a little more of the width, which is the
   /// intended trade: the labels stay readable either way.
   static double sidebarMaxWidth(double screenWidth) {
-    final quarter = screenWidth * 0.25;
-    return quarter < sidebarMinWidth ? sidebarMinWidth : quarter;
+    // A third, not a quarter. The rail sizes itself to its widest label, and
+    // "Compliance" needs about 122pt once the icon column and padding are
+    // counted -- more than a quarter of any iPhone, so the cap was binding and
+    // the label came out as "Complian...". It is the store-compliance page, on
+    // every screenshot of every screen, which is a poor thing to have clipped.
+    //
+    // A third still leaves two thirds for content, and on anything wide enough
+    // the cap is not reached at all: the rail takes only what its labels need.
+    final share = screenWidth / 3;
+    return share < sidebarMinWidth ? sidebarMinWidth : share;
   }
 
   /// Inner padding of the rail container.
