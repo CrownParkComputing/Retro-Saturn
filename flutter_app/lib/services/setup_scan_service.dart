@@ -9,6 +9,9 @@
 
 import 'dart:io';
 
+import 'package:path/path.dart' as p;
+import 'package:path_provider/path_provider.dart';
+
 import 'package:retro_saturn/data/media_entry.dart';
 import 'package:retro_saturn/services/library_scanner.dart';
 
@@ -48,7 +51,39 @@ class SetupScanService {
       final home = Platform.environment['HOME'] ?? '/root';
       return '$home/Ymir';
     }
+    // iOS is deliberately absent here and handled by defaultFolderAsync():
+    // its documents directory can only be resolved through path_provider,
+    // which is async, and this method cannot be.
     return null;
+  }
+
+  /// The default scan folder, including iOS.
+  ///
+  /// On iOS there is nothing for the user to choose: the app can only read its
+  /// own container, and the only way anything gets in is the Files app writing
+  /// into the directory published by UIFileSharingEnabled -- which is
+  /// Documents. So the default is not a convenience there, it is the entire
+  /// mechanism, and the folder has to EXIST before the user opens Files or
+  /// there is nowhere for them to drop a BIOS.
+  ///
+  /// The name matches what the setup wizard tells them to look for.
+  static Future<String?> defaultFolderAsync() async {
+    if (!Platform.isIOS) return defaultFolder();
+    final docs = await getApplicationDocumentsDirectory();
+    final folder = Directory(p.join(docs.path, 'Retro-Saturn'));
+    // Created, not just named: an absent folder is invisible in Files, so the
+    // instructions would point at something the user cannot find.
+    await folder.create(recursive: true);
+    await Directory(p.join(folder.path, 'BIOS')).create(recursive: true);
+    await Directory(p.join(folder.path, 'Games')).create(recursive: true);
+    return folder.path;
+  }
+
+  /// Async counterpart of [autoDetectFolder], so iOS is included.
+  static Future<String?> autoDetectFolderAsync() async {
+    final d = await defaultFolderAsync();
+    if (d == null) return null;
+    return Directory(d).existsSync() ? d : null;
   }
 
   /// Probe a folder for BIOS + game files. BIOS candidates = saturn*.bin

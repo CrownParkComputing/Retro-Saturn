@@ -31,7 +31,7 @@ class _SetupWizardScreenState extends State<SetupWizardScreen> {
 
   Future<void> _runFirstScan() async {
     String? initial = await AppPrefs.getGamesFolder();
-    initial ??= SetupScanService.autoDetectFolder();
+    initial ??= await SetupScanService.autoDetectFolderAsync();
     if (initial == null) {
       setState(() {
         _scanned = true;
