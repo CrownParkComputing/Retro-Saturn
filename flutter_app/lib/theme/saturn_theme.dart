@@ -42,8 +42,23 @@ class SaturnMetrics {
   /// WorkbenchCategory, clamped to these bounds. The Retroid Flip2's
   /// 456dp-tall landscape has plenty of room for a 180dp rail.
   static const double sidebarMinWidth = 120.0;
-  static double sidebarMaxWidth(double screenWidth) =>
-      screenWidth * 0.25;
+
+  /// Upper bound for the measured rail, never below [sidebarMinWidth].
+  ///
+  /// The floor matters. A quarter of the screen is under 120 on any display
+  /// narrower than 480pt, which is EVERY iPhone in portrait. Returning the
+  /// bare quarter handed the rail a clamp whose lower bound was above its
+  /// upper one, and `double.clamp` throws on that -- "Invalid argument(s):
+  /// 120.0". The whole workbench then failed to build, which reaches a user
+  /// as a red error screen in debug and a blank one in release.
+  ///
+  /// A quarter is a preference, not a constraint. On a narrow screen the rail
+  /// takes its minimum and gives up a little more of the width, which is the
+  /// intended trade: the labels stay readable either way.
+  static double sidebarMaxWidth(double screenWidth) {
+    final quarter = screenWidth * 0.25;
+    return quarter < sidebarMinWidth ? sidebarMinWidth : quarter;
+  }
 
   /// Inner padding of the rail container.
   static const double sideNavPadding = 4.0;
