@@ -164,21 +164,29 @@ jobs:
       # an Xcode extraction. A Mac already has the SDK, so nothing needs to be
       # cross-anything. The script installs the framework into
       # flutter_app/ios/Frameworks, which is where the Runner embeds it from.
-      - name: Build YmirCore.framework for iOS arm64
-        run: native/ymir_core/ios/build-ios-macos.sh
-
-      - name: Verify the framework was produced
+      # The core is COMMITTED as an xcframework and is no longer built here.
+      # Building it took minutes and produced a device-only .framework, which
+      # is the wrong shape now: an xcframework carries the simulator slice too,
+      # and Xcode picks whichever the destination needs.
+      - name: Verify the committed core carries both slices
         run: |
-          fw=flutter_app/ios/Frameworks/YmirCore.framework
-          if [ ! -f "$fw/YmirCore" ]; then
-            echo "::error::$fw/YmirCore is missing -- the core build did not install it."
-            exit 1
-          fi
-          file "$fw/YmirCore"
-          case "$(file -b "$fw/YmirCore")" in
-            *arm64*) ;;
-            *) echo "::error::YmirCore is not arm64 -- a simulator slice was built"; exit 1 ;;
-          esac
+          xc=flutter_app/ios/Frameworks/YmirCore.xcframework
+          for slice in ios-arm64 ios-arm64-simulator; do
+            bin="$xc/$slice/YmirCore.framework/YmirCore"
+            if [ ! -f "$bin" ]; then
+              echo "::error::$bin is missing -- rebuild with"
+              echo "::error::native/ymir_core/ios/build-ios-macos.sh and commit the result."
+              exit 1
+            fi
+          done
+          # Each slice must be for the platform it claims. A device binary in
+          # the simulator slot builds green and dies at dlopen on a simulator.
+          vtool -show-build "$xc/ios-arm64/YmirCore.framework/YmirCore" \
+            | grep -q "platform IOS$" \
+            || { echo "::error::ios-arm64 slice is not a device binary"; exit 1; }
+          vtool -show-build "$xc/ios-arm64-simulator/YmirCore.framework/YmirCore" \
+            | grep -q "platform IOSSIMULATOR" \
+            || { echo "::error::simulator slice is not a simulator binary"; exit 1; }
 
       - run: flutter build ios --release --no-codesign
         working-directory: flutter_app
@@ -201,6 +209,92 @@ jobs:
         with:
           name: ios-app
           path: flutter_app/build/ios/iphoneos/Runner.app
+
+      # --- Signed build, and the upload that actually creates an App Store
+      # --- build. Everything above produces an artifact nobody can install.
+      #
+      # All of it is skipped unless the secrets are set, so forks and pull
+      # requests still build the unsigned app rather than failing on a
+      # missing credential.
+      - name: Do we have signing and API credentials?
+        id: creds
+        run: |
+          if [ -n "${{ secrets.APPSTORE_CERT_BASE64 }}" ] \
+             && [ -n "${{ secrets.ASC_KEY_P8_BASE64 }}" ]; then
+            echo "have=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "have=false" >> "$GITHUB_OUTPUT"
+            echo "note: no signing/API secrets -- skipping the App Store upload"
+          fi
+
+      - name: Import signing certificate
+        if: steps.creds.outputs.have == 'true'
+        env:
+          CERT_BASE64: ${{ secrets.APPSTORE_CERT_BASE64 }}
+          CERT_PASSWORD: ${{ secrets.APPSTORE_CERT_PASSWORD }}
+          PROFILE_BASE64: ${{ secrets.APPSTORE_PROFILE_BASE64 }}
+        run: |
+          KEYCHAIN=build.keychain
+          security create-keychain -p actions "$KEYCHAIN"
+          security default-keychain -s "$KEYCHAIN"
+          security set-keychain-settings "$KEYCHAIN"     # no auto-lock mid-build
+          security unlock-keychain -p actions "$KEYCHAIN"
+          echo "$CERT_BASE64" | base64 -d > cert.p12
+          security import cert.p12 -k "$KEYCHAIN" -P "$CERT_PASSWORD" \
+            -T /usr/bin/codesign
+          # codesign: belongs in this list. Without it the key is present,
+          # `security find-identity` reports it as valid, and every signing
+          # attempt fails with errSecInternalComponent -- which reads as a
+          # broken certificate and is not one.
+          security set-key-partition-list -S apple-tool:,apple:,codesign: \
+            -s -k actions "$KEYCHAIN"
+          mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
+          echo "$PROFILE_BASE64" | base64 -d \
+            > ~/Library/MobileDevice/Provisioning\ Profiles/build.mobileprovision
+          rm cert.p12
+
+      # App Store Connect refuses a CFBundleVersion it has already seen, and
+      # says so only AFTER the whole upload has transferred. A timestamp is
+      # monotonic without having to ask the server what the highest number is,
+      # and is comfortably above the numbers already used.
+      - name: Choose a build number
+        if: steps.creds.outputs.have == 'true'
+        id: buildno
+        run: echo "n=$(date -u +%Y%m%d%H%M)" >> "$GITHUB_OUTPUT"
+
+      - name: Build signed IPA
+        if: steps.creds.outputs.have == 'true'
+        working-directory: flutter_app
+        run: |
+          flutter build ipa --release --export-method app-store \
+            --build-number=${{ steps.buildno.outputs.n }}
+
+      - name: Upload to App Store Connect
+        if: steps.creds.outputs.have == 'true'
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_P8_BASE64: ${{ secrets.ASC_KEY_P8_BASE64 }}
+        run: |
+          # altool finds the key by this exact filename, derived from the key
+          # id -- it is not configurable.
+          mkdir -p ~/private_keys
+          printf '%s' "$ASC_KEY_P8_BASE64" | base64 -d \
+            > ~/private_keys/AuthKey_${ASC_KEY_ID}.p8
+          ipa=$(ls flutter_app/build/ios/ipa/*.ipa | head -1)
+          echo "uploading $ipa"
+          # No --validate-app first: structural checks run server-side AFTER
+          # the transfer, so a clean validation proves nothing and only costs
+          # a second upload of the same bytes.
+          xcrun altool --upload-app -f "$ipa" -t ios \
+            --apiKey "$ASC_KEY_ID" --apiIssuer "$ASC_ISSUER_ID"
+          rm -f ~/private_keys/AuthKey_${ASC_KEY_ID}.p8
+
+      - uses: actions/upload-artifact@v4
+        if: steps.creds.outputs.have == 'true'
+        with:
+          name: ios-ipa
+          path: flutter_app/build/ios/ipa/*.ipa
 
   release:
     needs: [android, linux, ios]
