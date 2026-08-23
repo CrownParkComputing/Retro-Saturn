@@ -16,7 +16,7 @@ plugins {
 //   2. `key.properties` next to this file -- a checked-out keystore + four
 //      credentials, for local dev where the env vars aren't.
 //
-// applicationId stays `com.crownpark.ymir_multiplatform` so existing
+// applicationId is `com.saturn_emu.android` so existing
 // installs upgrade in place -- the display name is "Retro-Saturn" and
 // the Kotlin namespace is `com.crownpark.retro_saturn` for code
 // consistency, but the Play Store identity is preserved.
@@ -82,12 +82,15 @@ android {
     }
 
     defaultConfig {
-        // Retro-Saturn is the display name of this app; this applicationId
-        // remains `com.crownpark.ymir_multiplatform` because that is the
-        // Play Store identity under which the legacy ymir-android listing
-        // already lives. Changing it would mean publishing as a brand-new
-        // app; existing installs would not auto-update. Pick once and keep.
-        applicationId = "com.crownpark.ymir_multiplatform"
+        // Retro-Saturn is the display name of this app; the Play Store
+        // identity is `com.saturn_emu.android`, the listing currently
+        // titled "Sega Saturn - Android", which is where the existing
+        // users are. This previously read `com.crownpark.ymir_multiplatform`,
+        // which is not a package on the developer account at all -- the Play
+        // API returns 404 for it -- so a bundle built from it had nowhere to
+        // be uploaded. Changing this again would mean publishing as a
+        // brand-new app and stranding those installs. Pick once and keep.
+        applicationId = "com.saturn_emu.android"
         // 26, matching the API the native core is actually built against
         // (native/ymir_core/android/build.sh, ANDROID_API=26).
         //
