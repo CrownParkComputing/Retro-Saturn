@@ -16,6 +16,7 @@ import 'package:retro_saturn/services/app_prefs.dart';
 import 'package:retro_saturn/services/backup_ram_service.dart';
 import 'package:retro_saturn/services/smpc_state_service.dart';
 import 'package:retro_saturn/services/ymir_core_paths.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -111,9 +112,26 @@ class _RetroSaturnAppState extends State<RetroSaturnApp> with WidgetsBindingObse
   }
 
   Future<void> _checkSetup() async {
-    final completed = await AppPrefs.isSetupCompleted();
+    // Version-keyed: a new build re-triggers the wizard so the store
+    // review team and any new user always see the latest BIOS-folder
+    // contract on first launch. See AppPrefs.isSetupCompletedFor().
+    final version = await _currentAppVersion();
+    final completed = await AppPrefs.isSetupCompletedFor(version);
     if (!mounted) return;
     setState(() => _setupCompleted = completed);
+  }
+
+  /// Build+version of the running app, used as the key for "did this user
+  /// finish the setup wizard for THIS build?". Falls back to a sentinel
+  /// on read failure so the wizard at least runs once -- a failing
+  /// PackageInfo lookup should not brick the first-run experience.
+  static Future<String> _currentAppVersion() async {
+    try {
+      final info = await PackageInfo.fromPlatform();
+      return '${info.version}+${info.buildNumber}';
+    } catch (_) {
+      return 'unknown';
+    }
   }
 
   @override
@@ -128,7 +146,15 @@ class _RetroSaturnAppState extends State<RetroSaturnApp> with WidgetsBindingObse
               ? const _LoadingScreen()
               : (_setupCompleted == false
                   ? SetupWizardScreen(
-                      onComplete: () => setState(() => _setupCompleted = true),
+                      onComplete: () async {
+                        // Stamp the wizard as done FOR THIS BUILD. A new
+                        // version will set this back to false; the same
+                        // build keeps it on.
+                        final v = await _currentAppVersion();
+                        await AppPrefs.setSetupCompletedFor(v);
+                        if (!mounted) return;
+                        setState(() => _setupCompleted = true);
+                      },
                     )
                   : WorkbenchScreen(
                       core: _core!,

@@ -8,6 +8,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 class AppPrefs {
   // Setup wizard
   static const _setupCompletedKey = 'setup_completed';
+  static const _setupVersionKey = 'setup_version';
   static const _biosPathKey = 'bios_path';
   static const _gamesFolderKey = 'games_folder';
 
@@ -33,6 +34,31 @@ class AppPrefs {
   }
 
   // ---- setup ----
+  /// True when the wizard finished AND was last finished for the current
+  /// build. A new version bumps the flag back to false so every shipped
+  /// build gets a fresh first-run experience -- this is the contract the
+  /// store review team and any new user picks up on first install.
+  static Future<bool> isSetupCompletedFor(String version) async {
+    if (!(_p.getBool(_setupCompletedKey) ?? false)) return false;
+    final seen = _p.getString(_setupVersionKey);
+    if (seen == null) {
+      // An older build set the boolean but never wrote a version. Mark the
+      // current build as seen so the wizard does not re-run on every launch
+      // of that same build; the next version bump will trip the flag.
+      await _p.setString(_setupVersionKey, version);
+      return true;
+    }
+    return seen == version;
+  }
+
+  static Future<void> setSetupCompletedFor(String version) async {
+    await _p.setBool(_setupCompletedKey, true);
+    await _p.setString(_setupVersionKey, version);
+  }
+
+  /// Legacy boolean check kept for the rare caller that wants to know
+  /// "has the wizard EVER been completed" -- e.g. deciding whether to
+  /// greet the user on a build that does not bump the version.
   static Future<bool> isSetupCompleted() async => _p.getBool(_setupCompletedKey) ?? false;
   static Future<void> setSetupCompleted(bool v) => _p.setBool(_setupCompletedKey, v);
 

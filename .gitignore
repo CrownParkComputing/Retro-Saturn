@@ -71,3 +71,11 @@ flutter_app/android/key.properties
 flutter_app/ios/Flutter/Generated.xcconfig
 flutter_app/ios/Flutter/flutter_export_environment.sh
 flutter_app/ios/Pods/
+
+# Never commit copyrighted Sega Saturn BIOS / IPL images.
+# Users must supply their own legally-dumped BIOS; the app does not bundle one.
+*.bin
+bios/
+ipl/
+roms/ipl/
+saturn_bios*

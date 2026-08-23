@@ -2,7 +2,7 @@ name: retro_saturn
 description: "Retro-Saturn -- Sega Saturn emulator for Android, iOS and Linux."
 publish_to: 'none'
 
-version: 0.1.0+1
+version: 0.2.0+2
 
 environment:
   sdk: ^3.11.5
@@ -23,6 +23,7 @@ dependencies:
   archive: ^4.0.9
 
   crypto: any
+  package_info_plus: ^8.0.0
 dev_dependencies:
   flutter_test:
     sdk: flutter
