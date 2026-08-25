@@ -34,6 +34,7 @@ add_subdirectory("${YMIR_ROOT}" "${CMAKE_BINARY_DIR}/ymir-core-build")
 # The shared library the Flutter FE will dlopen.
 add_library(ymircore SHARED
     "${CMAKE_CURRENT_LIST_DIR}/../bridge/ymir_bridge.cpp"
+    "${CMAKE_CURRENT_LIST_DIR}/../bridge/savestate_io.cpp"
     "${CMAKE_CURRENT_LIST_DIR}/../bridge/audio_backend.cpp")
 
 target_compile_features(ymircore PRIVATE cxx_std_17)
@@ -68,6 +69,7 @@ set_target_properties(ymircore PROPERTIES
 # static lib with the same sources.
 add_library(ymircore_static STATIC
     "${CMAKE_CURRENT_LIST_DIR}/../bridge/ymir_bridge.cpp"
+    "${CMAKE_CURRENT_LIST_DIR}/../bridge/savestate_io.cpp"
     "${CMAKE_CURRENT_LIST_DIR}/../bridge/audio_backend.cpp"
     "${CMAKE_CURRENT_LIST_DIR}/../bridge/audio_backend_stub.cpp")
 target_include_directories(ymircore_static PRIVATE
@@ -93,8 +95,10 @@ add_ymir_test(ymir_swap_snapshot_test)
 add_ymir_test(ymir_audio_tone_test)
 add_ymir_test(ymir_input_mixdown_test)
 add_ymir_test(ymir_backup_ram_test)
+add_ymir_test(ymir_savestate_test)
 
 set_target_properties(ymir_smoke_test ymir_peripheral_test
                       ymir_swap_snapshot_test ymir_audio_tone_test
                       ymir_input_mixdown_test ymir_backup_ram_test
+                      ymir_savestate_test
     PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")

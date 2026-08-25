@@ -32,6 +32,11 @@ class EmulatorScreen extends StatefulWidget {
   final String? gamesFolder;
   final MediaEntry? entry;
 
+  /// Save state to restore once the disc is mounted, or null for a normal
+  /// launch. Restoring has to wait for loadDisc: the core validates the disc
+  /// and BIOS hashes and refuses a state that belongs to another machine, so
+  /// a state loaded before the disc is in is a state rejected.
+  final String? resumeStatePath;
 
   /// Owned by the workbench -- the in-game toolbar toggles this, and we
   /// render the on-screen Saturn pad when it is true. Lifting it out of
@@ -47,6 +52,7 @@ class EmulatorScreen extends StatefulWidget {
     this.biosPath,
     this.gamesFolder,
     this.entry,
+    this.resumeStatePath,
     this.showPadOverlay = false,
   });
 
@@ -136,9 +142,33 @@ class _EmulatorScreenState extends State<EmulatorScreen> {
       BackupRamService.startAutoSave(widget.core, entry.path);
       AppLog.log('NVRAM auto-save started (60s interval)');
 
+      // Now that the disc is mounted, a requested state can be restored.
+      final resume = widget.resumeStatePath;
+      if (resume != null && File(resume).existsSync()) {
+        final rc = widget.core.loadState(resume);
+        AppLog.log('resume state rc=$rc ($resume)');
+        if (rc != 0 && mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content: Text(_resumeError(rc)),
+          ));
+        }
+      }
     }
 
     AppLog.log('emulator running: ${widget.core.status} @ ${widget.core.fps}fps');
+  }
+
+  /// Turn the core's refusal codes into something that says what to do.
+  static String _resumeError(int rc) {
+    switch (rc) {
+      case -13:
+        return 'That save state was made by an older build and cannot be '
+            'loaded. Start a new session.';
+      case -14:
+        return 'That save state belongs to a different disc or BIOS.';
+      default:
+        return 'Could not restore that save state (error $rc).';
+    }
   }
 
   @override

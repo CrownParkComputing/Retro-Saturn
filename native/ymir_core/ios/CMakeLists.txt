@@ -46,6 +46,7 @@ add_subdirectory("${YMIR_ROOT}" "${CMAKE_BINARY_DIR}/ymir-core-build")
 # do not exist here and define the same entry points twice.
 add_library(YmirCore SHARED
     "${CMAKE_CURRENT_LIST_DIR}/../bridge/ymir_bridge.cpp"
+    "${CMAKE_CURRENT_LIST_DIR}/../bridge/savestate_io.cpp"
     "${CMAKE_CURRENT_LIST_DIR}/../bridge/audio_backend_ios.mm")
 
 target_compile_features(YmirCore PRIVATE cxx_std_17)

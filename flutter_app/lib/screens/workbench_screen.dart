@@ -27,6 +27,8 @@ import 'package:retro_saturn/screens/compliance_screen.dart';
 import 'package:retro_saturn/screens/emulator_screen.dart';
 import 'package:retro_saturn/screens/history_screen.dart';
 import 'package:retro_saturn/screens/input_settings_screen.dart';
+import 'package:retro_saturn/screens/save_states_screen.dart';
+import 'package:retro_saturn/services/save_state_service.dart';
 import 'package:retro_saturn/screens/library_grid.dart';
 import 'package:retro_saturn/screens/paths_settings_screen.dart';
 import 'package:retro_saturn/services/app_prefs.dart';
@@ -59,6 +61,11 @@ class _WorkbenchScreenState extends State<WorkbenchScreen> {
   /// (kill) and Pause (snapshot) buttons leave the Dart side in
   /// distinguishable states.
   MediaEntry? _currentEntry;
+
+  /// Save state the next EmulatorScreen should restore once its disc is
+  /// mounted. Set by the States view, cleared as soon as it is handed over so
+  /// a later plain launch of the same game starts from the BIOS.
+  String? _pendingResumePath;
 
   /// On-screen Saturn pad overlay toggle. Lifted out of EmulatorScreen so
   /// the toolbar in [_statusBar] (this screen's bottom row) and the
@@ -163,6 +170,15 @@ class _WorkbenchScreenState extends State<WorkbenchScreen> {
   /// _RetroSaturnAppState.dispose); calling dispose() here would break
   /// the bare-launcher mode.
   void _onSessionExit() {
+    // Keep the session before tearing it down: leaving a game is the moment
+    // people most expect to be able to pick it up again, and slot 0 is the
+    // automatic one so nothing the user saved by hand is touched.
+    final leaving = _currentEntry;
+    if (leaving != null) {
+      final snapshot = widget.core.framebuffer;
+      unawaited(SaveStateService.save(widget.core, leaving, kAutoSlot,
+          snapshot: snapshot));
+    }
     setState(() {
       _inEmulator = false;
       _padVisible = false;
@@ -171,6 +187,29 @@ class _WorkbenchScreenState extends State<WorkbenchScreen> {
       _currentEntry = null;
     });
     _stopRuntimeTicker();
+  }
+
+  /// Reads the pending resume path and clears it, so it applies to exactly
+  /// one launch. Returning it from the builder rather than clearing in
+  /// setState keeps it from surviving a rebuild and silently re-restoring.
+  String? _takePendingResume() {
+    final path = _pendingResumePath;
+    _pendingResumePath = null;
+    return path;
+  }
+
+  /// Tap on a card in the States view. The disc has to be mounted before the
+  /// state can be restored, so this launches the game and hands the state to
+  /// the emulator screen to apply once loadDisc has run.
+  void _onResumeSlot(MediaEntry entry, int slot) {
+    setState(() {
+      _currentEntry = entry;
+      _pendingResumePath = SaveStateService.statePathFor(entry, slot);
+      _category = WorkbenchCategory.games;
+      _inEmulator = true;
+      _sidebarHidden = true;
+    });
+    _startRuntimeTicker();
   }
 
   /// Tap on the "Paused: <title>" banner. Restores the snapshot the
@@ -223,6 +262,11 @@ class _WorkbenchScreenState extends State<WorkbenchScreen> {
             });
             _startRuntimeTicker();
           },
+        );
+      case WorkbenchCategory.states:
+        return SaveStatesScreen(
+          gamesFolder: _gamesFolder,
+          onResume: _onResumeSlot,
         );
       case WorkbenchCategory.paths:
         return const PathsSettingsScreen();
@@ -681,6 +725,9 @@ class _WorkbenchScreenState extends State<WorkbenchScreen> {
         biosPath: _biosPath,
         gamesFolder: _gamesFolder,
         entry: _currentEntry,
+        // Handed over once: the emulator screen applies it after loadDisc,
+        // and a later plain launch of the same game boots from the BIOS.
+        resumeStatePath: _takePendingResume(),
         showPadOverlay: _padVisible,
       ),
     );

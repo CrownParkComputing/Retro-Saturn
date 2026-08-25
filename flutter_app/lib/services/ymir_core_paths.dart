@@ -76,6 +76,10 @@ class YmirCorePaths {
   static String get saveStatePath =>
       p.join(_baseDir, 'savestates', 'session.bin');
 
+  /// Root for per-game save states. Each game gets a directory under
+  /// here holding its slots, thumbnails and metadata.
+  static String get saveStateRoot => p.join(_baseDir, 'savestates');
+
   /// App log file. Reachable from the in-app Logs screen; not
   /// surfaced directly through the device file picker.
   static String get appLogPath =>

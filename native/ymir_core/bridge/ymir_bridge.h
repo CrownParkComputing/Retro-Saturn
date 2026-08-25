@@ -42,6 +42,12 @@ typedef struct YmirInstance YmirInstance;
 #define YMIR_ERR_SNAPSHOT_VERSION   -10
 #define YMIR_ERR_BUSY               -11
 #define YMIR_ERR_NOT_RUNNING        -12
+/* Save state written by a build whose SaveState layout differs, or not a
+ * save state at all. Refused rather than reinterpreted. */
+#define YMIR_ERR_STATE_INCOMPATIBLE -13
+/* Save state is well-formed but belongs to another machine: ymir-core checks
+ * the IPL ROM and disc hashes before restoring. */
+#define YMIR_ERR_STATE_MISMATCH     -14
 
 /* ---- peripheral types (matches ymir::peripheral::PeripheralType) ---- */
 typedef enum {

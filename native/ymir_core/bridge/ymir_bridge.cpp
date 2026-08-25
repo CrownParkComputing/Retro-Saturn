@@ -36,12 +36,16 @@
 #include <ymir/hw/smpc/peripheral/peripheral_impl_virtua_gun.hpp>
 #include <ymir/hw/smpc/peripheral/peripheral_impl_shuttle_mouse.hpp>
 #include "input_mixdown.hpp"
+#include "savestate_io.hpp"
+
 #include <ymir/hw/vdp/vdp.hpp>
 #include <ymir/hw/scsp/scsp.hpp>
 #include <ymir/media/disc.hpp>
 #include <ymir/media/loader/loader.hpp>
 #include <ymir/sys/backup_ram.hpp>
 #include <ymir/savestate/savestate.hpp>
+
+#include <pthread.h>
 
 #include <algorithm>
 #include <array>
@@ -128,13 +132,25 @@ struct Request {
     std::promise<int32_t> done;
 };
 
+/* The worker thread's stack, pinned to the same figure on every platform.
+ *
+ * Android hands a new thread ~1 MB. The host gives 8. That difference hid a
+ * crash: a 6 MB SaveState declared as a local in a request handler ran fine in
+ * every host test and killed the app on the device the instant a game was
+ * tapped -- the overflow happens when the frame is reserved, so it took out
+ * disc loading, not saving. Pinning the tightest target's figure here means
+ * the host tests hit the same wall the device does. */
+static constexpr size_t kWorkerStackBytes = 1024u * 1024u;
+
 /* ---- the instance ---- */
 struct YmirInstance {
     /* core */
     std::unique_ptr<ymir::Saturn> saturn;
 
-    /* threading */
-    std::thread        worker;
+    /* threading. pthread rather than std::thread purely so the stack size
+     * above can be set; std::thread offers no way to ask for one. */
+    pthread_t          worker{};
+    bool               workerStarted = false;
     std::atomic<bool>  workerRunning{false};
     std::atomic<bool>  workerShouldStop{false};
     std::mutex         mut;          /* protects all mutating ops */
@@ -426,21 +442,64 @@ static void apply_request(YmirInstance *inst, Request *req) {
             break;
         }
         case Request::kSaveState: {
-            /* ymir-core's savestate::SaveState is a structured POD with
-             * no built-in Serialize/Deserialize (the upstream API
-             * deliberately keeps the wire format private). v1 keeps
-             * the SaveState in memory only; on-disk save state is a
-             * v2 task. */
-            set_status(inst, "Save state: not implemented in v1 (use rewind buffer)");
-            rc = YMIR_ERR_GENERIC;
+            /* ymir-core fills the struct; the wire format is ours. See
+             * savestate_io.hpp for why the two vector members are carried
+             * separately from the struct image. */
+            auto st = ymir_bridge::MakeSaveState();
+            inst->saturn->SaveState(*st);
+            const auto bytes = ymir_bridge::SerializeSaveState(*st);
+            rc = write_file(req->path, bytes.data(), bytes.size());
+            set_status(inst, rc == YMIR_OK ? "State saved" : "State save failed");
             break;
         }
         case Request::kLoadState: {
-            rc = YMIR_ERR_GENERIC;
+            auto bytes = read_file(req->path, &rc);
+            if (rc != YMIR_OK) break;
+            auto st = ymir_bridge::MakeSaveState();
+            if (!ymir_bridge::DeserializeSaveState(bytes.data(), bytes.size(), *st)) {
+                /* Wrong magic, wrong version, or written by a build whose
+                 * struct layout differs -- refused rather than reinterpreted,
+                 * because loading it would put each field's bytes into some
+                 * other field and the failure would surface as an emulator
+                 * that runs but is quietly insane. */
+                set_status(inst, "State rejected: not a state for this build");
+                rc = YMIR_ERR_STATE_INCOMPATIBLE;
+                break;
+            }
+            if (!inst->saturn->LoadState(*st)) {
+                /* ymir-core validates the IPL/disc hashes: a state saved
+                 * against a different BIOS or a different disc is not this
+                 * machine's state. */
+                set_status(inst, "State rejected: BIOS or disc does not match");
+                rc = YMIR_ERR_STATE_MISMATCH;
+                break;
+            }
+            set_status(inst, "State loaded");
             break;
         }
         case Request::kSwapState: {
-            rc = YMIR_ERR_GENERIC;
+            /* Save the current state beside the target, then load the target.
+             * The order matters: if the load is refused, the caller still has
+             * the state it was about to replace. */
+            const std::string curPath = std::string(req->path) + ".cur";
+            {
+                auto st = ymir_bridge::MakeSaveState();
+                inst->saturn->SaveState(*st);
+                const auto bytes = ymir_bridge::SerializeSaveState(*st);
+                rc = write_file(curPath.c_str(), bytes.data(), bytes.size());
+                if (rc != YMIR_OK) break;
+            }
+            auto bytes = read_file(req->path, &rc);
+            if (rc != YMIR_OK) break;
+            auto st = ymir_bridge::MakeSaveState();
+            if (!ymir_bridge::DeserializeSaveState(bytes.data(), bytes.size(), *st) ||
+                !inst->saturn->LoadState(*st)) {
+                set_status(inst, "Swap rejected: state not loadable");
+                rc = YMIR_ERR_STATE_INCOMPATIBLE;
+                break;
+            }
+            std::remove(curPath.c_str());
+            set_status(inst, "State swapped");
             break;
         }
         case Request::kSetPeripheralType:
@@ -618,7 +677,26 @@ YmirInstance *ymir_bridge_create(void) {
     /* start worker thread */
     inst->workerShouldStop.store(false, std::memory_order_release);
     inst->workerRunning.store(true, std::memory_order_release);
-    inst->worker = std::thread(worker_loop, inst.get());
+    {
+        pthread_attr_t attr;
+        pthread_attr_init(&attr);
+        pthread_attr_setstacksize(&attr, kWorkerStackBytes);
+        YmirInstance *raw = inst.get();
+        const int err = pthread_create(
+            &inst->worker, &attr,
+            [](void *ctx) -> void * {
+                worker_loop((YmirInstance *)ctx);
+                return nullptr;
+            },
+            raw);
+        pthread_attr_destroy(&attr);
+        if (err != 0) {
+            inst->workerRunning.store(false, std::memory_order_release);
+            set_status(raw, "Worker thread failed to start");
+            return nullptr;
+        }
+        inst->workerStarted = true;
+    }
 
     set_status(inst.get(), "Ready");
     return inst.release();
@@ -627,7 +705,10 @@ YmirInstance *ymir_bridge_create(void) {
 void ymir_bridge_destroy(YmirInstance *inst) {
     if (!inst) return;
     inst->workerShouldStop.store(true, std::memory_order_release);
-    if (inst->worker.joinable()) inst->worker.join();
+    if (inst->workerStarted) {
+        pthread_join(inst->worker, nullptr);
+        inst->workerStarted = false;
+    }
     if (inst->audio) {
         if (inst->audio->stop) inst->audio->stop(inst->audio->user);
         if (inst->audio->destroy) inst->audio->destroy(inst->audio->user);

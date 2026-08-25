@@ -40,6 +40,7 @@ add_subdirectory("${YMIR_ROOT}" "${CMAKE_BINARY_DIR}/ymir-core-build")
 
 add_library(ymircore SHARED
     "${CMAKE_CURRENT_LIST_DIR}/../bridge/ymir_bridge.cpp"
+    "${CMAKE_CURRENT_LIST_DIR}/../bridge/savestate_io.cpp"
     "${CMAKE_CURRENT_LIST_DIR}/../bridge/audio_backend_android.cpp")
 
 target_compile_features(ymircore PRIVATE cxx_std_17)

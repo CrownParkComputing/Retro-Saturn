@@ -24,6 +24,7 @@
 // destination in the rail -- the banner is the only path back.
 enum WorkbenchCategory {
   games('🎮', 'Games', 0),
+  states('💾', 'States', 0),
   paths('📂', 'Paths', 1),
   audio('🔊', 'Audio', 1),
   input('🕹️', 'Input', 1),
