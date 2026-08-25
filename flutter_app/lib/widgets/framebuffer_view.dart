@@ -69,6 +69,14 @@ class _FramebufferViewState extends State<FramebufferView> {
   }
 
   Future<void> _tick() async {
+    // Nothing is being emulated while paused, so there is no new frame to
+    // fetch -- and fetching one is not free: core.framebuffer copies the whole
+    // buffer out of native memory and decodeImageFromPixels re-uploads it,
+    // sixty times a second. Left running with the app in the background that
+    // was most of the CPU the app was still burning after the emulation
+    // itself had stopped.
+    if (widget.core.presentationPaused) return;
+
     final snap = widget.core.framebuffer;
     if (snap == null) return;
     final newImage = await _decode(snap.argb, snap.width, snap.height);

@@ -14,6 +14,7 @@ import 'package:retro_saturn/screens/workbench_screen.dart';
 import 'package:retro_saturn/services/app_log.dart';
 import 'package:retro_saturn/services/app_prefs.dart';
 import 'package:retro_saturn/services/backup_ram_service.dart';
+import 'package:retro_saturn/services/core_pause_coordinator.dart';
 import 'package:retro_saturn/services/smpc_state_service.dart';
 import 'package:retro_saturn/services/ymir_core_paths.dart';
 import 'package:package_info_plus/package_info_plus.dart';
@@ -40,9 +41,8 @@ class _RetroSaturnAppState extends State<RetroSaturnApp> with WidgetsBindingObse
   String? _loadError;
   bool? _setupCompleted;
 
-  /// Whether the emulator core was paused before backgrounding, so
-  /// coming back doesn't un-pause something the user paused deliberately.
-  bool _corePausedBeforeBackground = false;
+  final CorePauseCoordinator _pauseCoordinator = CorePauseCoordinator();
+
 
   /// Saturn BIOS SMPC persistent state — restored on launch to skip the
   /// Set Clock / Set Language wizard when the user has completed it.
@@ -106,14 +106,11 @@ class _RetroSaturnAppState extends State<RetroSaturnApp> with WidgetsBindingObse
       return;
     }
 
-    final foreground = state == AppLifecycleState.resumed;
+    // Everything else is CorePauseCoordinator's decision -- see that file for
+    // why "pause unless resumed" is wrong in both directions.
     final core = _core;
-    if (!foreground) {
-      _corePausedBeforeBackground = core?.presentationPaused ?? false;
-      if (!_corePausedBeforeBackground) core?.setPresentationPaused(true);
-    } else {
-      if (!_corePausedBeforeBackground) core?.setPresentationPaused(false);
-    }
+    _pauseCoordinator.onLifecycle(
+        state, core == null ? null : _CorePauseAdapter(core));
   }
 
   Future<void> _loadCore() async {
@@ -228,4 +225,17 @@ class _ErrorScreen extends StatelessWidget {
       ),
     );
   }
+}
+
+/// Bridges the concrete core to the narrow interface the pause coordinator
+/// needs, so that logic has no dependency on dart:ffi and can be tested.
+class _CorePauseAdapter implements PausableCore {
+  final YmirCore _core;
+  _CorePauseAdapter(this._core);
+
+  @override
+  bool get presentationPaused => _core.presentationPaused;
+
+  @override
+  void setPresentationPaused(bool paused) => _core.setPresentationPaused(paused);
 }

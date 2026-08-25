@@ -96,9 +96,10 @@ add_ymir_test(ymir_audio_tone_test)
 add_ymir_test(ymir_input_mixdown_test)
 add_ymir_test(ymir_backup_ram_test)
 add_ymir_test(ymir_savestate_test)
+add_ymir_test(ymir_pause_test)
 
 set_target_properties(ymir_smoke_test ymir_peripheral_test
                       ymir_swap_snapshot_test ymir_audio_tone_test
                       ymir_input_mixdown_test ymir_backup_ram_test
-                      ymir_savestate_test
+                      ymir_savestate_test ymir_pause_test
     PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")

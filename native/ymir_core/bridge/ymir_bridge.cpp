@@ -532,6 +532,30 @@ static void worker_loop(YmirInstance *inst) {
         /* process pending state changes first */
         drain_mailbox(inst);
 
+        /* Paused: stop emulating, but keep serving requests.
+         *
+         * presentationPaused was set and read back and gated NOTHING -- the
+         * Saturn kept running at full speed with the app in the background,
+         * which is why minimising left music playing and the battery draining.
+         *
+         * The mailbox is still drained above, deliberately: saving a state,
+         * writing NVRAM and swapping a disc all arrive as requests, and the
+         * app does exactly that while paused. A pause that also stopped
+         * answering requests would deadlock the caller waiting on the
+         * promise.
+         *
+         * Frames are not "caught up" on resume: nextFrame is pushed forward
+         * so an app that spent an hour in the background does not come back
+         * and run an hour of emulation as fast as it can. */
+        if (inst->presentationPaused.load(std::memory_order_relaxed)) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(16));
+            nextFrame = clock::now() + std::chrono::milliseconds(16);
+            lastFpsTime = clock::now();
+            frameCount = 0;
+            inst->fps.store(0, std::memory_order_relaxed);
+            continue;
+        }
+
         /* one emulation frame */
         try {
             inst->saturn->RunFrame();
@@ -786,7 +810,26 @@ void ymir_bridge_reset(YmirInstance *inst, int32_t hard) {
 
 void ymir_bridge_set_presentation_paused(YmirInstance *inst, int32_t paused) {
     if (!inst) return;
-    inst->presentationPaused.store(paused ? 1 : 0, std::memory_order_relaxed);
+    const int32_t want = paused ? 1 : 0;
+    const int32_t was = inst->presentationPaused.exchange(want, std::memory_order_relaxed);
+    if (was == want) return;
+
+    /* Stop the audio device too, not just the emulation.
+     *
+     * With frames no longer being produced the ring runs dry and the render
+     * callback writes silence -- but the stream stays open and the audio HAL
+     * keeps calling it, so the OS still lists the app as playing and the
+     * device stays awake for it. Backgrounding should release the stream
+     * outright.
+     *
+     * stop() closes the stream and start() opens a fresh one; the backend
+     * contract says both are safe to call whether or not it is running. */
+    if (!inst->audio) return;
+    if (want) {
+        if (inst->audio->stop) inst->audio->stop(inst->audio->user);
+    } else {
+        if (inst->audio->start) inst->audio->start(inst->audio->user);
+    }
 }
 
 int32_t ymir_bridge_get_presentation_paused(YmirInstance *inst) {
