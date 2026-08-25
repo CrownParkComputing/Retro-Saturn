@@ -40,12 +40,19 @@ target_compile_features(ymircore PRIVATE cxx_std_17)
 target_include_directories(ymircore PRIVATE
     "${CMAKE_CURRENT_LIST_DIR}/../bridge"
     "${YMIR_ROOT}/libs/ymir-core/include")
+# ALSA has to be found BEFORE anything links it. It was the other way round,
+# so ${ALSA_LIBRARIES} expanded to nothing, libymircore.so was built with no
+# DT_NEEDED on libasound, and the first process to dlopen it died with
+# "undefined symbol: snd_pcm_open" -- which is what `flutter test` did, since
+# widget_test loads the real core.
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(ALSA REQUIRED alsa)
+
 target_link_libraries(ymircore PRIVATE
     ymir-core
     Threads::Threads)
 target_link_libraries(ymircore PRIVATE ${ALSA_LIBRARIES})
-find_package(PkgConfig REQUIRED)
-pkg_check_modules(ALSA REQUIRED alsa)
+target_link_directories(ymircore PRIVATE ${ALSA_LIBRARY_DIRS})
 target_include_directories(ymircore PRIVATE ${ALSA_INCLUDE_DIRS})
 
 set_target_properties(ymircore PROPERTIES
@@ -69,6 +76,7 @@ target_include_directories(ymircore_static PRIVATE
 target_compile_features(ymircore_static PRIVATE cxx_std_17)
 target_link_libraries(ymircore_static PUBLIC ymir-core Threads::Threads fmt fmt-c)
 target_link_libraries(ymircore_static PRIVATE ${ALSA_LIBRARIES})
+target_link_directories(ymircore_static PRIVATE ${ALSA_LIBRARY_DIRS})
 target_include_directories(ymircore_static PRIVATE ${ALSA_INCLUDE_DIRS})
 
 function(add_ymir_test NAME)
@@ -83,7 +91,9 @@ add_ymir_test(ymir_smoke_test)
 add_ymir_test(ymir_peripheral_test)
 add_ymir_test(ymir_swap_snapshot_test)
 add_ymir_test(ymir_audio_tone_test)
+add_ymir_test(ymir_backup_ram_test)
 
 set_target_properties(ymir_smoke_test ymir_peripheral_test
                       ymir_swap_snapshot_test ymir_audio_tone_test
+                      ymir_backup_ram_test
     PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")

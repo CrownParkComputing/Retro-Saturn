@@ -512,6 +512,29 @@ YmirInstance *ymir_bridge_create(void) {
     auto inst = std::make_unique<YmirInstance>();
     inst->saturn = std::make_unique<ymir::Saturn>();
 
+    /* Fit the internal backup RAM up front.
+     *
+     * A real Saturn always has its 32 KiB of internal backup memory. ymir-core
+     * leaves the container null until an image is loaded, and
+     * BackupMemory::Size() dereferences that null (backup_ram.cpp:228) -- so
+     * with no NVRAM file on disk, the first auto-save took the process down
+     * with a SIGSEGV on the emulation thread, 60 seconds after a disc loaded,
+     * in every game. The Dart side had already logged "NVRAM load: false" and
+     * carried on, because a missing save file is a normal first run.
+     *
+     * A later LoadInternalBackupMemoryImage swaps its own mapped container in
+     * on success and returns early WITHOUT clearing this one on failure, so
+     * fitting it here holds for the life of the instance. SetInternalBackupRAM
+     * swaps contents rather than objects, leaving the SH2 bus mapping (bound to
+     * the object's address) intact. */
+    {
+        ymir::bup::BackupMemory bup;
+        bup.CreateInMemory(ymir::sys::kInternalBackupRAMSize);
+        if (!inst->saturn->mem.SetInternalBackupRAM(std::move(bup))) {
+            set_status(inst.get(), "internal backup RAM rejected");
+        }
+    }
+
     /* default peripherals — control pad on port 1, nothing on port 2 */
     install_peripheral(inst.get(), 0, YMIR_PERIPHERAL_CONTROL_PAD);
     install_peripheral(inst.get(), 1, YMIR_PERIPHERAL_NONE);
