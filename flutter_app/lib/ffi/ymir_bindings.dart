@@ -27,6 +27,20 @@ enum YmirPeripheralType {
   final int value;
 }
 
+/// Shuttle Mouse buttons — matches the C `YmirMouseButton`. Deliberately
+/// separate from [YmirButton]: the mouse is its own device, and the bridge
+/// used to read its buttons out of the pad mask, so a pad binding moved the
+/// pointer.
+enum YmirMouseButton {
+  left(0),
+  middle(1),
+  right(2),
+  start(3);
+
+  const YmirMouseButton(this.value);
+  final int value;
+}
+
 /// Saturn pad buttons — matches `YmirButton`.
 enum YmirButton {
   up(0),
@@ -107,6 +121,11 @@ typedef _VoidHandle5IntNative =
     ffi.Void Function(_H, ffi.Int32, ffi.Int32, ffi.Int32, ffi.Int32, ffi.Int32);
 typedef _VoidHandle5IntDart =
     void Function(ffi.Pointer<ffi.Uint8>, int, int, int, int, int);
+
+typedef _VoidHandle6IntNative = ffi.Void Function(
+    _H, ffi.Int32, ffi.Int32, ffi.Int32, ffi.Int32, ffi.Int32, ffi.Int32);
+typedef _VoidHandle6IntDart =
+    void Function(ffi.Pointer<ffi.Uint8>, int, int, int, int, int, int);
 
 typedef _VoidHandleLongNative = ffi.Void Function(_H, ffi.Int64);
 typedef _VoidHandleLongDart =
@@ -199,6 +218,15 @@ class YmirCoreBindings {
 
   late final _setGun = _lib.lookupFunction<_VoidHandle5IntNative, _VoidHandle5IntDart>(
       'ymir_bridge_set_virtua_gun_input');
+
+  late final _setGunState = _lib.lookupFunction<_VoidHandle6IntNative, _VoidHandle6IntDart>(
+      'ymir_bridge_set_virtua_gun_state');
+
+  late final _setMouseMotion = _lib.lookupFunction<_VoidHandleIntIntIntNative, _VoidHandleIntIntIntDart>(
+      'ymir_bridge_set_mouse_motion');
+
+  late final _setMouseButton = _lib.lookupFunction<_VoidHandleIntIntIntNative, _VoidHandleIntIntIntDart>(
+      'ymir_bridge_set_mouse_button');
 
   late final _setAnalog = _lib.lookupFunction<_VoidHandle5IntNative, _VoidHandle5IntDart>(
       'ymir_bridge_set_analog_axis');
@@ -359,6 +387,24 @@ class YmirCoreBindings {
   void setVirtuaGunInput(ffi.Pointer<ffi.Uint8> p, int port, int x, int y,
           bool trigger, bool start) {
     _setGun(p, port, x, y, trigger ? 1 : 0, start ? 1 : 0);
+  }
+
+  /// Aim + trigger + reload in one call. Reload is what a Saturn game reads
+  /// as "trigger pulled while aiming off-screen"; a touch screen has no
+  /// off-screen to aim at, so the overlay raises it explicitly.
+  void setVirtuaGunState(ffi.Pointer<ffi.Uint8> p, int port, int x, int y,
+      {required bool trigger, required bool start, required bool reload}) {
+    _setGunState(p, port, x, y, trigger ? 1 : 0, start ? 1 : 0, reload ? 1 : 0);
+  }
+
+  /// Relative Shuttle Mouse movement, in Saturn mouse units.
+  void setMouseMotion(ffi.Pointer<ffi.Uint8> p, int port, int dx, int dy) {
+    _setMouseMotion(p, port, dx, dy);
+  }
+
+  void setMouseButton(ffi.Pointer<ffi.Uint8> p, int port, YmirMouseButton button,
+      bool pressed) {
+    _setMouseButton(p, port, button.value, pressed ? 1 : 0);
   }
 
   void setAnalogAxis(ffi.Pointer<ffi.Uint8> p, int port, int lx, int ly,

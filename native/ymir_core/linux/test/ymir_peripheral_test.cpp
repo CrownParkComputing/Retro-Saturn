@@ -48,6 +48,14 @@ int main(int /*argc*/, char ** /*argv*/) {
             ymir_bridge_set_analog_axis(inst, port, 128, 128, 128, 128);
             ymir_bridge_set_virtua_gun_input(inst, port, 100, 100, 1, 0);
             ymir_bridge_set_virtua_gun_input(inst, port, 0xFFFF, 0xFFFF, 0, 0);
+            ymir_bridge_set_virtua_gun_state(inst, port, 100, 100, 1, 0, 0);
+            ymir_bridge_set_virtua_gun_state(inst, port, 0xFFFF, 0xFFFF, 0, 0, 1);
+            ymir_bridge_set_mouse_motion(inst, port, 4, -4);
+            ymir_bridge_set_mouse_motion(inst, port, -4, 4);
+            for (int mb = YMIR_MOUSE_LEFT; mb <= YMIR_MOUSE_START; ++mb) {
+                ymir_bridge_set_mouse_button(inst, port, (YmirMouseButton)mb, 1);
+                ymir_bridge_set_mouse_button(inst, port, (YmirMouseButton)mb, 0);
+            }
         }
     }
 

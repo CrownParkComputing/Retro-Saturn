@@ -35,6 +35,7 @@
 #include <ymir/hw/smpc/peripheral/peripheral_impl_mission_stick.hpp>
 #include <ymir/hw/smpc/peripheral/peripheral_impl_virtua_gun.hpp>
 #include <ymir/hw/smpc/peripheral/peripheral_impl_shuttle_mouse.hpp>
+#include "input_mixdown.hpp"
 #include <ymir/hw/vdp/vdp.hpp>
 #include <ymir/hw/scsp/scsp.hpp>
 #include <ymir/media/disc.hpp>
@@ -90,12 +91,22 @@ struct AudioRing {
 struct PeripheralState {
     YmirPeripheralType type    = YMIR_PERIPHERAL_NONE;
     uint16_t           buttons = 0xFFFF;  /* 1=released (ymir convention) */
-    /* virtua gun */
+    /* virtua gun. Trigger and reload are latched: a mouse click can begin
+     * and end inside one frame, and an unlatched flag set and cleared between
+     * two SMPC reads is a shot the game never sees. */
     uint16_t gun_x = 0xFFFF;
     uint16_t gun_y = 0xFFFF;
-    bool     gun_trigger = false;
+    ymir_bridge::LatchedButton gun_trigger;
+    ymir_bridge::LatchedButton gun_reload;
     bool     gun_start   = false;
-    bool     gun_reload  = false;
+    /* shuttle mouse: relative movement pending delivery, plus its own four
+     * buttons. These are NOT the pad button mask -- the mouse is a distinct
+     * device and sharing the mask made a pad mapping move the pointer. */
+    ymir_bridge::MouseAccum mouse;
+    bool mouse_left   = false;
+    bool mouse_middle = false;
+    bool mouse_right  = false;
+    bool mouse_start  = false;
     /* analog pad axes */
     uint8_t analog_lx = 128;
     uint8_t analog_ly = 128;
@@ -257,18 +268,21 @@ static void fill_peripheral_report(YmirInstance *inst, int32_t portIdx,
     case YMIR_PERIPHERAL_VIRTUA_GUN:
         /* bool fields here are 1=pressed (NOT inverted like the button mask) */
         report.report.virtuaGun.start   = ps.gun_start;
-        report.report.virtuaGun.trigger = ps.gun_trigger;
-        report.report.virtuaGun.reload  = ps.gun_reload;
+        report.report.virtuaGun.trigger = ps.gun_trigger.sample();
+        report.report.virtuaGun.reload  = ps.gun_reload.sample();
         report.report.virtuaGun.x       = ps.gun_x;
         report.report.virtuaGun.y       = ps.gun_y;
         break;
     case YMIR_PERIPHERAL_SHUTTLE_MOUSE:
-        report.report.shuttleMouse.start  = (ps.buttons >> 4) & 1 ? false : true;
-        report.report.shuttleMouse.middle = (ps.buttons >> 5) & 1 ? false : true;
-        report.report.shuttleMouse.left   = (ps.buttons >> 6) & 1 ? false : true;
-        report.report.shuttleMouse.right  = (ps.buttons >> 7) & 1 ? false : true;
-        report.report.shuttleMouse.x      = 0; /* mouse deltas — driven by stick X */
-        report.report.shuttleMouse.y      = 0;
+        /* bool fields here are 1=pressed, like the gun's -- not inverted. */
+        report.report.shuttleMouse.start  = ps.mouse_start;
+        report.report.shuttleMouse.middle = ps.mouse_middle;
+        report.report.shuttleMouse.left   = ps.mouse_left;
+        report.report.shuttleMouse.right  = ps.mouse_right;
+        /* Relative movement, drained one report at a time so a fast swipe
+         * arrives in full instead of being clamped down to one step. */
+        ps.mouse.consume(report.report.shuttleMouse.x,
+                         report.report.shuttleMouse.y);
         break;
     default:
         break;
@@ -790,12 +804,43 @@ void ymir_bridge_set_virtua_gun_input(YmirInstance *inst, int32_t port,
                                       int32_t x, int32_t y,
                                       int32_t trigger_pressed,
                                       int32_t start_pressed) {
+    /* Kept at its original arity for callers that predate reload. */
+    ymir_bridge_set_virtua_gun_state(inst, port, x, y,
+                                     trigger_pressed, start_pressed, 0);
+}
+
+void ymir_bridge_set_virtua_gun_state(YmirInstance *inst, int32_t port,
+                                      int32_t x, int32_t y,
+                                      int32_t trigger_pressed,
+                                      int32_t start_pressed,
+                                      int32_t reload_pressed) {
     if (!inst || (port != 1 && port != 2)) return;
     auto &ps = inst->ports[port - 1];
     ps.gun_x = (uint16_t)std::clamp(x, 0, 0xFFFF);
     ps.gun_y = (uint16_t)std::clamp(y, 0, 0xFFFF);
-    ps.gun_trigger = trigger_pressed != 0;
+    ps.gun_trigger.set(trigger_pressed != 0);
+    ps.gun_reload.set(reload_pressed != 0);
     ps.gun_start   = start_pressed   != 0;
+}
+
+void ymir_bridge_set_mouse_motion(YmirInstance *inst, int32_t port,
+                                  int32_t dx, int32_t dy) {
+    if (!inst || (port != 1 && port != 2)) return;
+    inst->ports[port - 1].mouse.add(dx, dy);
+}
+
+void ymir_bridge_set_mouse_button(YmirInstance *inst, int32_t port,
+                                  YmirMouseButton button, int32_t pressed) {
+    if (!inst || (port != 1 && port != 2)) return;
+    auto &ps = inst->ports[port - 1];
+    const bool down = pressed != 0;
+    switch (button) {
+    case YMIR_MOUSE_LEFT:   ps.mouse_left   = down; break;
+    case YMIR_MOUSE_MIDDLE: ps.mouse_middle = down; break;
+    case YMIR_MOUSE_RIGHT:  ps.mouse_right  = down; break;
+    case YMIR_MOUSE_START:  ps.mouse_start  = down; break;
+    default: break;
+    }
 }
 
 void ymir_bridge_set_analog_axis(YmirInstance *inst, int32_t port,

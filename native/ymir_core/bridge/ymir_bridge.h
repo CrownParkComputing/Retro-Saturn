@@ -54,6 +54,17 @@ typedef enum {
     YMIR_PERIPHERAL_SHUTTLE_MOUSE = 6,
 } YmirPeripheralType;
 
+
+/* Shuttle Mouse buttons. Distinct from YmirButton: the mouse is its own
+ * device, and routing it through the pad mask meant a pad binding moved
+ * the pointer. */
+typedef enum {
+    YMIR_MOUSE_LEFT   = 0,
+    YMIR_MOUSE_MIDDLE = 1,
+    YMIR_MOUSE_RIGHT  = 2,
+    YMIR_MOUSE_START  = 3,
+} YmirMouseButton;
+
 /* ---- save state wire format ---- */
 #define YMIR_SAVE_STATE_MAGIC   "YMS1"
 #define YMIR_SAVE_STATE_VERSION  1u
@@ -189,6 +200,30 @@ void ymir_bridge_set_virtua_gun_input(YmirInstance *inst, int32_t port,
                                       int32_t x, int32_t y,
                                       int32_t trigger_pressed,
                                       int32_t start_pressed);
+
+/* Feed Virtua Gun input including reload. Reload is what a game reads as
+ * "trigger pulled while aiming off-screen"; on a touch screen there is no
+ * off-screen to aim at, so the overlay raises it explicitly.
+ *
+ * Deliberately a new symbol rather than extra parameters on the call above:
+ * a prebuilt core that predates this change then fails the CI symbol check
+ * loudly instead of being handed an argument it does not read. */
+void ymir_bridge_set_virtua_gun_state(YmirInstance *inst, int32_t port,
+                                      int32_t x, int32_t y,
+                                      int32_t trigger_pressed,
+                                      int32_t start_pressed,
+                                      int32_t reload_pressed);
+
+/* Shuttle Mouse relative movement. Deltas accumulate and are delivered to
+ * the game across as many peripheral reads as they need -- the report can
+ * only carry -256..255 per read, and clamping a fast swipe would land the
+ * pointer short of where it was aimed. */
+void ymir_bridge_set_mouse_motion(YmirInstance *inst, int32_t port,
+                                  int32_t dx, int32_t dy);
+
+/* Shuttle Mouse button state (1 = pressed). */
+void ymir_bridge_set_mouse_button(YmirInstance *inst, int32_t port,
+                                  YmirMouseButton button, int32_t pressed);
 
 /* Analog pad axis: left_x and left_y in [0, 255] (128 = center). */
 void ymir_bridge_set_analog_axis(YmirInstance *inst, int32_t port,

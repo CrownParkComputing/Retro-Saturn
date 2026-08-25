@@ -15,6 +15,12 @@ import 'package:retro_saturn/ffi/ymir_core.dart';
 class FramebufferView extends StatefulWidget {
   final YmirCore core;
   final Duration pollInterval;
+
+  /// Published whenever the emulated resolution changes, so overlays that
+  /// map pointer coordinates into framebuffer space (the Virtua Gun) follow
+  /// the Saturn from 320x224 to 704x512 without re-reading -- and copying --
+  /// a whole frame of their own.
+  final ValueNotifier<Size>? frameSize;
   /// Draws the PANEL's redraw rate over the picture.
   ///
   /// Note this is not the core's frame rate: it counts how often this widget
@@ -26,6 +32,7 @@ class FramebufferView extends StatefulWidget {
   const FramebufferView({
     super.key,
     required this.core,
+    this.frameSize,
     // ~60fps, matching the rate the core actually produces and the interval
     // Retro-Dosbox uses. At 33ms this timer could tick only 30 times a
     // second, so a Saturn running at a solid 60 was displayed at half that
@@ -76,6 +83,10 @@ class _FramebufferViewState extends State<FramebufferView> {
       _imageH = snap.height;
     });
     oldImage?.dispose();
+    final size = Size(snap.width.toDouble(), snap.height.toDouble());
+    if (widget.frameSize != null && widget.frameSize!.value != size) {
+      widget.frameSize!.value = size;
+    }
     _frames++;
     final now = DateTime.now();
     if (now.difference(_lastFpsUpdate).inMilliseconds >= 1000) {

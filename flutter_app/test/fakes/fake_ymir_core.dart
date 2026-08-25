@@ -26,6 +26,11 @@ class FakeYmirCore extends ChangeNotifier implements YmirCore {
   final int _height = 224;
   Uint32List? _frame;
   final List<({int port, YmirButton button, bool pressed})> padEvents = [];
+  final List<({int port, int x, int y, bool trigger, bool start, bool reload})>
+      gunStates = [];
+  final List<({int port, int dx, int dy})> mouseMotion = [];
+  final List<({int port, YmirMouseButton button, bool pressed})> mouseButtons =
+      [];
   final List<({int port, YmirPeripheralType type})> peripheralEvents = [];
 
   // Settable behaviour
@@ -114,8 +119,31 @@ class FakeYmirCore extends ChangeNotifier implements YmirCore {
     calls.add('gun:$port:$x,$y:$trigger,$start');
   }
   @override
+  void setVirtuaGunState(int port, int x, int y,
+      {required bool trigger, required bool start, required bool reload}) {
+    calls.add('gunState:$port:$x,$y:$trigger,$start,$reload');
+    gunStates.add((
+      port: port,
+      x: x,
+      y: y,
+      trigger: trigger,
+      start: start,
+      reload: reload
+    ));
+  }
+  @override
   void setVirtuaGunFbSize(int width, int height) {
     calls.add('gunFbSize:$width,$height');
+  }
+  @override
+  void setMouseMotion(int port, int dx, int dy) {
+    calls.add('mouseMove:$port:$dx,$dy');
+    mouseMotion.add((port: port, dx: dx, dy: dy));
+  }
+  @override
+  void setMouseButton(int port, YmirMouseButton button, bool pressed) {
+    calls.add('mouseButton:$port:${button.name}:$pressed');
+    mouseButtons.add((port: port, button: button, pressed: pressed));
   }
   @override
   void setRtcToHost({int offsetSeconds = 0}) {

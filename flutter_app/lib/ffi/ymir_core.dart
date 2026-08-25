@@ -48,7 +48,11 @@ abstract class YmirCore {
   YmirPeripheralType getPeripheralType(int port);
   void setPadButton(int port, YmirButton button, bool pressed);
   void setVirtuaGunInput(int port, int x, int y, bool trigger, bool start);
+  void setVirtuaGunState(int port, int x, int y,
+      {required bool trigger, required bool start, required bool reload});
   void setVirtuaGunFbSize(int width, int height);
+  void setMouseMotion(int port, int dx, int dy);
+  void setMouseButton(int port, YmirMouseButton button, bool pressed);
   void setRtcToHost({int offsetSeconds = 0});
   void setPersistentSmpcPath(String path);
   void setAnalogAxis(int port, int lx, int ly, int rx, int ry);
@@ -159,8 +163,22 @@ class YmirCoreBindingsAdapter implements YmirCore {
       _bindings.setVirtuaGunInput(_h(), port, x, y, trigger, start);
 
   @override
+  void setVirtuaGunState(int port, int x, int y,
+          {required bool trigger, required bool start, required bool reload}) =>
+      _bindings.setVirtuaGunState(_h(), port, x, y,
+          trigger: trigger, start: start, reload: reload);
+
+  @override
   void setVirtuaGunFbSize(int width, int height) =>
       _bindings.setVirtuaGunFbSize(_h(), width, height);
+
+  @override
+  void setMouseMotion(int port, int dx, int dy) =>
+      _bindings.setMouseMotion(_h(), port, dx, dy);
+
+  @override
+  void setMouseButton(int port, YmirMouseButton button, bool pressed) =>
+      _bindings.setMouseButton(_h(), port, button, pressed);
 
   @override
   void setRtcToHost({int offsetSeconds = 0}) =>
