@@ -58,14 +58,29 @@ class _RetroSaturnAppState extends State<RetroSaturnApp> with WidgetsBindingObse
     _checkSetup();
   }
 
-  @override
-  void dispose() {
+  /// Saves what is worth keeping and tears the core down, once.
+  ///
+  /// Idempotent because both dispose() and a detached lifecycle callback can
+  /// reach it, and destroying twice would be a use-after-free rather than a
+  /// no-op.
+  void _shutdownCore() {
     final core = _core;
-    if (core != null) {
+    if (core == null) return;
+    _core = null;
+    try {
       core.saveSmpcState(_smpcStatePath);
-      core.dispose();
+    } on Object catch (e) {
+      // Losing the clock/language state is not a reason to skip the teardown
+      // below, which is the part that stops a thread.
+      debugPrint('saturn: SMPC state not saved on shutdown ($e)');
     }
     BackupRamService.stopAutoSave();
+    core.dispose();
+  }
+
+  @override
+  void dispose() {
+    _shutdownCore();
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
   }
@@ -73,6 +88,24 @@ class _RetroSaturnAppState extends State<RetroSaturnApp> with WidgetsBindingObse
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     super.didChangeAppLifecycleState(state);
+
+    // detached is the app being destroyed, and it is the ONLY reliable moment
+    // to shut the core down.
+    //
+    // State.dispose() on the root widget is not called when iOS terminates an
+    // app, so the emulator's worker thread was still running as the process
+    // went away -- which is a crash at exit, after everything the user did had
+    // worked. It cost a crash report per session and nothing else, which is
+    // why it looked like the emulator was killing the app when the emulator
+    // was fine.
+    //
+    // ymir_bridge_destroy stops the worker and joins it, so doing this here
+    // means the thread is gone before the runtime is.
+    if (state == AppLifecycleState.detached) {
+      _shutdownCore();
+      return;
+    }
+
     final foreground = state == AppLifecycleState.resumed;
     final core = _core;
     if (!foreground) {
