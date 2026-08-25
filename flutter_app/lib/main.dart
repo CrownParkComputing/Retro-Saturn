@@ -14,6 +14,7 @@ import 'package:retro_saturn/screens/workbench_screen.dart';
 import 'package:retro_saturn/services/app_log.dart';
 import 'package:retro_saturn/services/app_prefs.dart';
 import 'package:retro_saturn/services/backup_ram_service.dart';
+import 'package:retro_saturn/services/core_options_service.dart';
 import 'package:retro_saturn/services/core_pause_coordinator.dart';
 import 'package:retro_saturn/services/smpc_state_service.dart';
 import 'package:retro_saturn/services/ymir_core_paths.dart';
@@ -128,6 +129,12 @@ class _RetroSaturnAppState extends State<RetroSaturnApp> with WidgetsBindingObse
       // MUST be called BEFORE LoadIPL so ymir-core reads it during boot
       // and the BIOS wizard auto-skips on subsequent launches.
       core.setPersistentSmpcPath(_smpcStatePath);
+
+      // The user's core options, before anything boots. Applying them after a
+      // disc had loaded would mean the first seconds of every session ran on
+      // ymir-core's defaults instead of the chosen settings.
+      await CoreOptionsService.load();
+      CoreOptionsService.applyAll(core);
 
       // Set the SMPC RTC to the device's current clock BEFORE LoadIPL.
       // The BIOS Set Clock wizard then shows the right date+time so the

@@ -26,6 +26,7 @@ import 'package:retro_saturn/screens/audio_settings_screen.dart';
 import 'package:retro_saturn/screens/compliance_screen.dart';
 import 'package:retro_saturn/screens/emulator_screen.dart';
 import 'package:retro_saturn/screens/history_screen.dart';
+import 'package:retro_saturn/screens/core_options_screen.dart';
 import 'package:retro_saturn/screens/input_settings_screen.dart';
 import 'package:retro_saturn/screens/save_states_screen.dart';
 import 'package:retro_saturn/services/save_state_service.dart';
@@ -274,6 +275,8 @@ class _WorkbenchScreenState extends State<WorkbenchScreen> {
         return AudioSettingsScreen(core: widget.core);
       case WorkbenchCategory.input:
         return InputSettingsScreen(core: widget.core);
+      case WorkbenchCategory.core:
+        return CoreOptionsScreen(core: widget.core);
       case WorkbenchCategory.history:
         return const HistoryScreen();
       case WorkbenchCategory.compliance:
@@ -595,7 +598,14 @@ class _WorkbenchScreenState extends State<WorkbenchScreen> {
           PeripheralSelector(core: widget.core, port: 1),
           const SizedBox(height: 12),
           PeripheralSelector(core: widget.core, port: 2),
-          const SizedBox(height: 16),
+          const Divider(height: 32),
+          // The same controls as the Core page. Every option ymir-core takes
+          // at runtime, so they can be moved with a game running -- which is
+          // the point of having them here rather than only in the rail.
+          Text('Core options', style: Theme.of(context).textTheme.titleSmall),
+          const SizedBox(height: 8),
+          CoreOptionsList(core: widget.core, compact: true),
+          const Divider(height: 32),
           Text('Bridge status', style: Theme.of(context).textTheme.titleSmall),
           Text(widget.core.status),
           Text('FPS: ${widget.core.fps}'),

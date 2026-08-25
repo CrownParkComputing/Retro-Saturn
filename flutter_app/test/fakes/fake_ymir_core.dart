@@ -135,6 +135,19 @@ class FakeYmirCore extends ChangeNotifier implements YmirCore {
   void setVirtuaGunFbSize(int width, int height) {
     calls.add('gunFbSize:$width,$height');
   }
+  /// Options the fake is holding, so tests can assert what was applied.
+  final Map<YmirCoreOption, int> coreOptions = {};
+
+  @override
+  int setCoreOption(YmirCoreOption option, int value) {
+    calls.add('setCoreOption:${option.name}=$value');
+    coreOptions[option] = value;
+    return 0;
+  }
+
+  @override
+  int getCoreOption(YmirCoreOption option) => coreOptions[option] ?? -1;
+
   @override
   void setMouseMotion(int port, int dx, int dy) {
     calls.add('mouseMove:$port:$dx,$dy');

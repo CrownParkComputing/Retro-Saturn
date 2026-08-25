@@ -122,13 +122,15 @@ struct PeripheralState {
 struct Request {
     enum Op { kLoadDisc, kLoadBios, kReset, kLoadInternalBackup, kSaveInternalBackup,
               kLoadSmpc, kSaveSmpc, kSaveState, kLoadState, kSwapState,
-              kSetPeripheralType };
+              kSetPeripheralType, kSetCoreOption };
     Op                  op;
     char                path[1024] = {};
     int32_t             port       = 1;
     int32_t             hard       = 0;
     int32_t             copyOnWrite = 0;
     YmirPeripheralType  ptype      = YMIR_PERIPHERAL_NONE;
+    YmirCoreOption      option     = YMIR_OPT_AUTODETECT_REGION;
+    int32_t             optValue   = 0;
     std::promise<int32_t> done;
 };
 
@@ -362,6 +364,65 @@ static void install_peripheral(YmirInstance *inst, int32_t portIdx, YmirPeripher
  *  worker thread + mailbox
  * =================================================================== */
 
+/* Applies one option to ymir-core's Configuration. Runs on the emulator
+ * thread: assigning an observable notifies observers, and those run inside the
+ * core. Values are validated here rather than trusted -- an out-of-range CD
+ * read speed or overclock is a caller bug, not something to pass through. */
+static int32_t apply_core_option(YmirInstance *inst, YmirCoreOption option,
+                                 int32_t value) {
+    if (!inst || !inst->saturn) return YMIR_ERR_INVALID_HANDLE;
+    auto &cfg = inst->saturn->configuration;
+    const bool flag = value != 0;
+
+    switch (option) {
+    case YMIR_OPT_AUTODETECT_REGION:
+        cfg.system.autodetectRegion = flag;
+        return YMIR_OK;
+    case YMIR_OPT_VIDEO_STANDARD:
+        if (value < 0 || value > 1) return YMIR_ERR_INVALID_ARG;
+        cfg.system.videoStandard = value == 1
+                                       ? ymir::core::config::sys::VideoStandard::PAL
+                                       : ymir::core::config::sys::VideoStandard::NTSC;
+        return YMIR_OK;
+    case YMIR_OPT_EMULATE_SH2_CACHE:
+        cfg.system.emulateSH2Cache = flag;
+        return YMIR_OK;
+    case YMIR_OPT_SH2_OVERCLOCK:
+        /* 100 is the real thing. Below ~50 the Saturn cannot keep up with its
+         * own timings; the upper bound is a sanity limit, not a hardware one. */
+        if (value < 50 || value > 500) return YMIR_ERR_INVALID_ARG;
+        cfg.system.sh2OverclockFactor = (uint32_t)value;
+        return YMIR_OK;
+    case YMIR_OPT_THREADED_VDP1:
+        cfg.video.threadedVDP1 = flag;
+        return YMIR_OK;
+    case YMIR_OPT_THREADED_VDP2:
+        cfg.video.threadedVDP2 = flag;
+        return YMIR_OK;
+    case YMIR_OPT_THREADED_DEINTERLACE:
+        cfg.video.threadedDeinterlacer = flag;
+        return YMIR_OK;
+    case YMIR_OPT_AUDIO_INTERPOLATION:
+        if (value < 0 || value > 1) return YMIR_ERR_INVALID_ARG;
+        cfg.audio.interpolation =
+            value == 0 ? ymir::core::config::audio::SampleInterpolationMode::NearestNeighbor
+                       : ymir::core::config::audio::SampleInterpolationMode::Linear;
+        return YMIR_OK;
+    case YMIR_OPT_CD_READ_SPEED:
+        /* ymir-core documents 2..200; 2 is the real drive. */
+        if (value < 2 || value > 200) return YMIR_ERR_INVALID_ARG;
+        cfg.cdblock.readSpeedFactor = (uint8_t)value;
+        return YMIR_OK;
+    case YMIR_OPT_CDBLOCK_LLE:
+        /* Changing this hard-resets the machine inside ymir-core, and it needs
+         * the CD block ROM. The app warns before offering it. */
+        cfg.cdblock.useLLE = flag;
+        return YMIR_OK;
+    default:
+        return YMIR_ERR_INVALID_ARG;
+    }
+}
+
 static void apply_request(YmirInstance *inst, Request *req) {
     int32_t rc = YMIR_OK;
     try {
@@ -504,6 +565,9 @@ static void apply_request(YmirInstance *inst, Request *req) {
         }
         case Request::kSetPeripheralType:
             install_peripheral(inst, req->port - 1, req->ptype);
+            break;
+        case Request::kSetCoreOption:
+            rc = apply_core_option(inst, req->option, req->optValue);
             break;
         }
     } catch (const std::exception &e) {
@@ -945,6 +1009,40 @@ void ymir_bridge_set_virtua_gun_state(YmirInstance *inst, int32_t port,
     ps.gun_trigger.set(trigger_pressed != 0);
     ps.gun_reload.set(reload_pressed != 0);
     ps.gun_start   = start_pressed   != 0;
+}
+
+int32_t ymir_bridge_set_core_option(YmirInstance *inst, YmirCoreOption option,
+                                    int32_t value) {
+    if (!inst) return YMIR_ERR_INVALID_HANDLE;
+    if (option < 0 || option >= YMIR_OPT_COUNT) return YMIR_ERR_INVALID_ARG;
+    auto req = std::make_unique<Request>();
+    req->op = Request::kSetCoreOption;
+    req->option = option;
+    req->optValue = value;
+    return enqueue_request(inst, std::move(req));
+}
+
+int32_t ymir_bridge_get_core_option(YmirInstance *inst, YmirCoreOption option) {
+    if (!inst || !inst->saturn) return -1;
+    const auto &cfg = inst->saturn->configuration;
+    switch (option) {
+    case YMIR_OPT_AUTODETECT_REGION:    return cfg.system.autodetectRegion ? 1 : 0;
+    case YMIR_OPT_VIDEO_STANDARD:
+        return *cfg.system.videoStandard == ymir::core::config::sys::VideoStandard::PAL ? 1 : 0;
+    case YMIR_OPT_EMULATE_SH2_CACHE:    return *cfg.system.emulateSH2Cache ? 1 : 0;
+    case YMIR_OPT_SH2_OVERCLOCK:        return (int32_t)*cfg.system.sh2OverclockFactor;
+    case YMIR_OPT_THREADED_VDP1:        return *cfg.video.threadedVDP1 ? 1 : 0;
+    case YMIR_OPT_THREADED_VDP2:        return *cfg.video.threadedVDP2 ? 1 : 0;
+    case YMIR_OPT_THREADED_DEINTERLACE: return *cfg.video.threadedDeinterlacer ? 1 : 0;
+    case YMIR_OPT_AUDIO_INTERPOLATION:
+        return *cfg.audio.interpolation ==
+                       ymir::core::config::audio::SampleInterpolationMode::Linear
+                   ? 1
+                   : 0;
+    case YMIR_OPT_CD_READ_SPEED:        return (int32_t)*cfg.cdblock.readSpeedFactor;
+    case YMIR_OPT_CDBLOCK_LLE:          return *cfg.cdblock.useLLE ? 1 : 0;
+    default:                            return -1;
+    }
 }
 
 void ymir_bridge_set_mouse_motion(YmirInstance *inst, int32_t port,

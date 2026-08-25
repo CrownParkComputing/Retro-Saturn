@@ -27,6 +27,27 @@ enum YmirPeripheralType {
   final int value;
 }
 
+/// Core options — matches the C `YmirCoreOption`.
+///
+/// Every option is a bool, a small enum or an integer, so one typed get/set
+/// carries all of them. What each value means lives in the catalogue in
+/// `data/core_option.dart`, next to the labels the user reads.
+enum YmirCoreOption {
+  autodetectRegion(0),
+  videoStandard(1),
+  emulateSh2Cache(2),
+  sh2Overclock(3),
+  threadedVdp1(4),
+  threadedVdp2(5),
+  threadedDeinterlace(6),
+  audioInterpolation(7),
+  cdReadSpeed(8),
+  cdBlockLle(9);
+
+  const YmirCoreOption(this.value);
+  final int value;
+}
+
 /// Shuttle Mouse buttons — matches the C `YmirMouseButton`. Deliberately
 /// separate from [YmirButton]: the mouse is its own device, and the bridge
 /// used to read its buttons out of the pad mask, so a pad binding moved the
@@ -121,6 +142,9 @@ typedef _VoidHandle5IntNative =
     ffi.Void Function(_H, ffi.Int32, ffi.Int32, ffi.Int32, ffi.Int32, ffi.Int32);
 typedef _VoidHandle5IntDart =
     void Function(ffi.Pointer<ffi.Uint8>, int, int, int, int, int);
+
+typedef _IntHandleIntIntNative = ffi.Int32 Function(_H, ffi.Int32, ffi.Int32);
+typedef _IntHandleIntIntDart = int Function(ffi.Pointer<ffi.Uint8>, int, int);
 
 typedef _VoidHandle6IntNative = ffi.Void Function(
     _H, ffi.Int32, ffi.Int32, ffi.Int32, ffi.Int32, ffi.Int32, ffi.Int32);
@@ -218,6 +242,11 @@ class YmirCoreBindings {
 
   late final _setGun = _lib.lookupFunction<_VoidHandle5IntNative, _VoidHandle5IntDart>(
       'ymir_bridge_set_virtua_gun_input');
+
+  late final _setCoreOption = _lib.lookupFunction<_IntHandleIntIntNative, _IntHandleIntIntDart>(
+      'ymir_bridge_set_core_option');
+  late final _getCoreOption = _lib.lookupFunction<_IntHandleIntNative, _IntHandleIntDart>(
+      'ymir_bridge_get_core_option');
 
   late final _setGunState = _lib.lookupFunction<_VoidHandle6IntNative, _VoidHandle6IntDart>(
       'ymir_bridge_set_virtua_gun_state');
@@ -388,6 +417,15 @@ class YmirCoreBindings {
           bool trigger, bool start) {
     _setGun(p, port, x, y, trigger ? 1 : 0, start ? 1 : 0);
   }
+
+  /// Applies a core option. Returns YMIR_OK, or an error for a value the
+  /// core will not accept.
+  int setCoreOption(ffi.Pointer<ffi.Uint8> p, YmirCoreOption option, int value) =>
+      _setCoreOption(p, option.value, value);
+
+  /// Reads an option back from the core, or -1 if it does not know it.
+  int getCoreOption(ffi.Pointer<ffi.Uint8> p, YmirCoreOption option) =>
+      _getCoreOption(p, option.value);
 
   /// Aim + trigger + reload in one call. Reload is what a Saturn game reads
   /// as "trigger pulled while aiming off-screen"; a touch screen has no

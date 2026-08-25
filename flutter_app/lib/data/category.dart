@@ -28,6 +28,7 @@ enum WorkbenchCategory {
   paths('📂', 'Paths', 1),
   audio('🔊', 'Audio', 1),
   input('🕹️', 'Input', 1),
+  core('⚙️', 'Core', 1),
   history('📜', 'Memories', 2),
   compliance('✅', 'Compliance', 2),
   about('ℹ️', 'About', 2);

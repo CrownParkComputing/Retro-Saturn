@@ -52,6 +52,8 @@ abstract class YmirCore {
       {required bool trigger, required bool start, required bool reload});
   void setVirtuaGunFbSize(int width, int height);
   void setMouseMotion(int port, int dx, int dy);
+  int setCoreOption(YmirCoreOption option, int value);
+  int getCoreOption(YmirCoreOption option);
   void setMouseButton(int port, YmirMouseButton button, bool pressed);
   void setRtcToHost({int offsetSeconds = 0});
   void setPersistentSmpcPath(String path);
@@ -175,6 +177,14 @@ class YmirCoreBindingsAdapter implements YmirCore {
   @override
   void setMouseMotion(int port, int dx, int dy) =>
       _bindings.setMouseMotion(_h(), port, dx, dy);
+
+  @override
+  int setCoreOption(YmirCoreOption option, int value) =>
+      _bindings.setCoreOption(_h(), option, value);
+
+  @override
+  int getCoreOption(YmirCoreOption option) =>
+      _bindings.getCoreOption(_h(), option);
 
   @override
   void setMouseButton(int port, YmirMouseButton button, bool pressed) =>

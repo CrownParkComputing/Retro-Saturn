@@ -71,6 +71,49 @@ typedef enum {
     YMIR_MOUSE_START  = 3,
 } YmirMouseButton;
 
+/* ---- core options ----
+ *
+ * ymir-core's Configuration exposes a handful of knobs that change how the
+ * Saturn behaves: accuracy against speed, threading, CD read speed. Every one
+ * of them is a bool, an enum or a small integer, so the ABI is a single typed
+ * int get/set rather than ten separate calls -- adding an option upstream
+ * means one enumerator here and one row in the app's catalogue, not a new
+ * export and a stale prebuilt core.
+ *
+ * Values:
+ *   booleans          0 or 1
+ *   VIDEO_STANDARD    0 = NTSC, 1 = PAL
+ *   AUDIO_INTERP      0 = nearest neighbour, 1 = linear (what the SCSP does)
+ *   SH2_OVERCLOCK     percent, 100 = the real thing
+ *   CD_READ_SPEED     2..200, 2 = the real drive
+ *
+ * Sets are applied on the emulator thread. ymir-core's Configuration is
+ * explicit that its observables must not be modified from another thread, and
+ * changing one notifies observers that run inside the core. */
+typedef enum {
+    YMIR_OPT_AUTODETECT_REGION    = 0,
+    YMIR_OPT_VIDEO_STANDARD       = 1,
+    YMIR_OPT_EMULATE_SH2_CACHE    = 2,
+    YMIR_OPT_SH2_OVERCLOCK        = 3,
+    YMIR_OPT_THREADED_VDP1        = 4,
+    YMIR_OPT_THREADED_VDP2        = 5,
+    YMIR_OPT_THREADED_DEINTERLACE = 6,
+    YMIR_OPT_AUDIO_INTERPOLATION  = 7,
+    YMIR_OPT_CD_READ_SPEED        = 8,
+    YMIR_OPT_CDBLOCK_LLE          = 9,
+    YMIR_OPT_COUNT                = 10,
+} YmirCoreOption;
+
+/* Apply an option. Returns YMIR_OK, or YMIR_ERR_INVALID_ARG for an unknown
+ * option or a value outside what the core accepts. Safe before a disc is
+ * loaded and while one is running. */
+int32_t ymir_bridge_set_core_option(YmirInstance *inst,
+                                    YmirCoreOption option,
+                                    int32_t value);
+
+/* Read an option back. Returns the value, or -1 for an unknown option. */
+int32_t ymir_bridge_get_core_option(YmirInstance *inst, YmirCoreOption option);
+
 /* ---- save state wire format ---- */
 #define YMIR_SAVE_STATE_MAGIC   "YMS1"
 #define YMIR_SAVE_STATE_VERSION  1u
