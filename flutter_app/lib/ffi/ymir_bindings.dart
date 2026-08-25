@@ -314,6 +314,28 @@ class YmirCoreBindings {
       final w = wPtr.value;
       final h = hPtr.value;
       if (fbPtr == nullptr || w == 0 || h == 0) return null;
+
+      // Bounds-check the dimensions before trusting them.
+      //
+      // asTypedList(w * h) reads the core's memory directly, so these two
+      // integers decide how far the read goes. They come back from the
+      // emulator while it is running, and a poll that lands during a video
+      // mode change can see a width paired with the previous height, or a
+      // value not yet written -- and the read then runs off the end of the
+      // framebuffer. That is a SIGSEGV: the process dies outright, with no
+      // Dart exception to catch and nothing in the logs, which is exactly how
+      // this looked -- "loadDisc rc=0 ... emulator running @ 63fps" and then
+      // the app simply gone.
+      //
+      // The Saturn's largest mode is 704x512. The ceiling here is generous
+      // enough to survive a legitimate hi-res frame and mean enough to reject
+      // a garbage one; a rejected poll costs a single frame, because the next
+      // tick reads again.
+      const maxDimension = 1024;
+      if (w < 0 || h < 0 || w > maxDimension || h > maxDimension) {
+        return null;
+      }
+
       final len = w * h;
       final list = Uint32List.fromList(fbPtr.asTypedList(len));
       return FrameSnapshot(width: w, height: h, argb: list);
