@@ -183,6 +183,10 @@ class _RetroSaturnAppState extends State<RetroSaturnApp> with WidgetsBindingObse
               ? const _LoadingScreen()
               : (_setupCompleted == false
                   ? SetupWizardScreen(
+                      // At-launch setup is either a first run (no folder,
+                      // so the walkthrough shows anyway) or a new build
+                      // re-check -- verify, don't re-teach.
+                      verifyOnly: true,
                       onComplete: () async {
                         // Stamp the wizard as done FOR THIS BUILD. A new
                         // version will set this back to false; the same

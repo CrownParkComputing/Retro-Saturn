@@ -16,7 +16,19 @@ import 'package:retro_saturn/services/storage_permission.dart';
 
 class SetupWizardScreen extends StatefulWidget {
   final VoidCallback onComplete;
-  const SetupWizardScreen({super.key, required this.onComplete});
+
+  /// Skip the walkthrough and go straight to re-checking the folder
+  /// already set. Used when a new build re-triggers setup at launch --
+  /// the questions have been answered, and asking them again would
+  /// suggest the answers had been lost. Someone who ASKS for setup from
+  /// Paths gets the full walkthrough, exactly like Retro-Amiga.
+  final bool verifyOnly;
+
+  const SetupWizardScreen({
+    super.key,
+    required this.onComplete,
+    this.verifyOnly = false,
+  });
 
   @override
   State<SetupWizardScreen> createState() => _SetupWizardScreenState();
@@ -48,9 +60,11 @@ class _SetupWizardScreenState extends State<SetupWizardScreen> {
     _maybeResumeExistingSetup();
   }
 
-  /// A folder already chosen means this is a re-run (new build, or Settings)
-  /// rather than a first meeting -- skip the teaching and re-check it.
+  /// On a verify-only run (new build), a folder already chosen skips the
+  /// teaching and goes straight to re-checking it. An explicit re-run from
+  /// Paths starts at the welcome page like a first meeting.
   Future<void> _maybeResumeExistingSetup() async {
+    if (!widget.verifyOnly) return;
     final String? existing = await AppPrefs.getGamesFolder();
     if (existing == null || !mounted) return;
     await _scanFolder(existing);
