@@ -29,7 +29,11 @@ class ComplianceScreen extends StatelessWidget {
   /// flag -- this screen does not navigate on its own.
   final VoidCallback? onRerunSetup;
 
-  const ComplianceScreen({super.key, this.onRerunSetup});
+  /// Fired after the store-compliance mode switch changes, so the
+  /// workbench can rescan (or stop scanning) the library.
+  final VoidCallback? onModeChanged;
+
+  const ComplianceScreen({super.key, this.onRerunSetup, this.onModeChanged});
 
   @override
   Widget build(BuildContext context) {
@@ -47,6 +51,12 @@ class ComplianceScreen extends StatelessWidget {
           'connection is required to check any of it.',
           style: TextStyle(color: Colors.white54, fontSize: 12),
         ),
+        const SizedBox(height: 16),
+
+        // The switch itself, not just prose about it: a reviewer (or a
+        // user) can put the app into the no-user-content state and back
+        // from right here, the same shape as the rest of the family.
+        _ComplianceModeSwitch(onChanged: onModeChanged),
         const SizedBox(height: 16),
 
         const _Head('1. No BIOS is shipped'),
@@ -206,5 +216,58 @@ class _BiosStateLineState extends State<_BiosStateLine> {
         : 'On this device right now: a user-supplied BIOS is installed '
             '(${_biosPath!.split('/').last}).';
     return _Body(text);
+  }
+}
+
+
+/// Store-compliance mode: on, the app uses no user content at all -- the
+/// library is not scanned or shown. What a store reviewer runs.
+class _ComplianceModeSwitch extends StatefulWidget {
+  const _ComplianceModeSwitch({this.onChanged});
+
+  final VoidCallback? onChanged;
+
+  @override
+  State<_ComplianceModeSwitch> createState() => _ComplianceModeSwitchState();
+}
+
+class _ComplianceModeSwitchState extends State<_ComplianceModeSwitch> {
+  bool _on = false;
+  bool _loaded = false;
+
+  @override
+  void initState() {
+    super.initState();
+    AppPrefs.getComplianceMode().then((v) {
+      if (!mounted) return;
+      setState(() {
+        _on = v;
+        _loaded = true;
+      });
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      margin: EdgeInsets.zero,
+      child: SwitchListTile(
+        title: const Text('Store compliance mode'),
+        subtitle: const Text(
+            'On: the app uses no user content -- the games library is not '
+            'scanned or shown. Off: your own BIOS and games, read from the '
+            'folders you chose.',
+            style: TextStyle(fontSize: 11, color: Colors.white54)),
+        value: _on,
+        onChanged: !_loaded
+            ? null
+            : (v) async {
+                await AppPrefs.setComplianceMode(v);
+                if (!mounted) return;
+                setState(() => _on = v);
+                widget.onChanged?.call();
+              },
+      ),
+    );
   }
 }

@@ -102,6 +102,16 @@ class _SetupWizardScreenState extends State<SetupWizardScreen> {
     });
   }
 
+  /// The store-compliance route: the app uses no user content, setup is
+  /// done, and the workbench opens with the library hidden and the
+  /// compliance statement one tap away. The switch on the Compliance page
+  /// turns it back off.
+  Future<void> _storeCompliance() async {
+    await AppPrefs.setComplianceMode(true);
+    if (!mounted) return;
+    await _finish();
+  }
+
   Future<void> _pickFolder() async {
     // Permission before the picker: the system picker will happily hand
     // back an SD-card path the app then cannot read.
@@ -118,6 +128,12 @@ class _SetupWizardScreenState extends State<SetupWizardScreen> {
 
   Future<void> _finish() async {
     final r = _result;
+    // Finishing with results means "my own BIOS and games" -- leave
+    // compliance mode, or the next launch would hide the library that was
+    // just scanned.
+    if (r != null && (r.hasBios || r.hasGames)) {
+      await AppPrefs.setComplianceMode(false);
+    }
     if (r != null && r.hasBios) {
       await AppPrefs.setBiosPath(r.biosCandidates.first);
     }
@@ -219,9 +235,28 @@ class _SetupWizardScreenState extends State<SetupWizardScreen> {
     return ListView(
       padding: const EdgeInsets.symmetric(horizontal: 24),
       children: <Widget>[
+        const SizedBox(height: 16),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: <Widget>[
+            ClipRRect(
+              borderRadius: BorderRadius.circular(10),
+              child: Image.asset(
+                'assets/images/app_icon.png',
+                height: 44,
+                width: 44,
+                fit: BoxFit.cover,
+                filterQuality: FilterQuality.medium,
+                errorBuilder: (BuildContext c, Object e, StackTrace? st) =>
+                    const Icon(Icons.videogame_asset, size: 30),
+              ),
+            ),
+            const SizedBox(width: 12),
+            Text('Retro-Saturn',
+                style: Theme.of(context).textTheme.headlineSmall),
+          ],
+        ),
         const SizedBox(height: 24),
-        Text('Two ways in', style: Theme.of(context).textTheme.titleMedium),
-        const SizedBox(height: 10),
         if (_notice != null)
           Padding(
             padding: const EdgeInsets.only(bottom: 12),
@@ -230,49 +265,85 @@ class _SetupWizardScreenState extends State<SetupWizardScreen> {
               style: const TextStyle(color: Colors.orangeAccent, height: 1.4),
             ),
           ),
-        const Text(
-          'JUST SHOW ME WHAT IT IS\n'
-          'The store-compliance page explains what the app does and what it '
-          'needs, with nothing required from you.',
-          style: TextStyle(color: Colors.white54, height: 1.4),
-        ),
-        const SizedBox(height: 10),
-        OutlinedButton(
-          onPressed: () => Navigator.of(context).push(MaterialPageRoute<void>(
-              builder: (_) => Scaffold(
-                    appBar: AppBar(title: const Text('Store compliance')),
-                    body: const ComplianceScreen(),
-                  ))),
-          child: const Padding(
-            padding: EdgeInsets.symmetric(vertical: 10),
-            child: Text('Store Compliance'),
+        // The choice, with both routes explained in full -- the route that
+        // needs nothing from the user comes first, because a reviewer (or
+        // anyone with no BIOS yet) should not have to read instructions
+        // aimed at somebody else to find it.
+        Card(
+          color: const Color(0xFF13161F),
+          shape: RoundedRectangleBorder(
+            side: const BorderSide(color: Color(0xFF2B3340)),
+            borderRadius: BorderRadius.circular(8),
           ),
-        ),
-        const Divider(height: 28),
-        const Text(
-          'SET UP MY OWN SATURN\n'
-          'Your BIOS and your disc images. Choose the folder they live in '
-          'and they are read in place — nothing is copied or moved. You see '
-          'what was found before anything starts.',
-          style: TextStyle(color: Colors.white54, height: 1.4),
-        ),
-        const SizedBox(height: 10),
-        FilledButton(
-          onPressed: _busy ? null : _pickFolder,
-          child: const Padding(
-            padding: EdgeInsets.symmetric(vertical: 10),
-            child: Text('Choose my Saturn folder…'),
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: <Widget>[
+                Text('Two ways in',
+                    style: Theme.of(context).textTheme.titleMedium),
+                const SizedBox(height: 10),
+                const Text(
+                  'JUST LOOK AROUND FIRST\n'
+                  'The app ships no BIOS -- Sega\'s is still copyrighted, '
+                  'and there is no free replacement the way the Amiga and '
+                  'C64 have one. Store Compliance mode uses no user content '
+                  'at all: the library stays unscanned, and the compliance '
+                  'statement explains everything a store review needs, '
+                  'offline. You can switch it off later from the '
+                  'Compliance page.',
+                  style: TextStyle(color: Colors.white54, height: 1.4),
+                ),
+                const SizedBox(height: 10),
+                OutlinedButton(
+                  onPressed: _busy ? null : _storeCompliance,
+                  child: const Padding(
+                    padding: EdgeInsets.symmetric(vertical: 10),
+                    child: Text('Store Compliance'),
+                  ),
+                ),
+                TextButton(
+                  onPressed: () => Navigator.of(context).push(
+                      MaterialPageRoute<void>(
+                          builder: (_) => Scaffold(
+                                appBar: AppBar(
+                                    title: const Text('Store compliance')),
+                                body: const ComplianceScreen(),
+                              ))),
+                  child: const Text('Read the compliance statement'),
+                ),
+                const Divider(height: 28, color: Color(0xFF2B3340)),
+                const Text(
+                  'SET UP MY OWN SATURN\n'
+                  'Your BIOS -- dumped from a console you own -- and your '
+                  'disc images. Choose the folder they live in and they are '
+                  'read in place: nothing is copied or moved, an SD card '
+                  'works like any other folder, and you see what was found '
+                  'before anything starts.',
+                  style: TextStyle(color: Colors.white54, height: 1.4),
+                ),
+                const SizedBox(height: 10),
+                FilledButton(
+                  onPressed: _busy ? null : _pickFolder,
+                  child: const Padding(
+                    padding: EdgeInsets.symmetric(vertical: 10),
+                    child: Text('Choose my Saturn folder…'),
+                  ),
+                ),
+                TextButton(
+                  onPressed: _busy ? null : _runFirstScan,
+                  child: const Text('Scan the usual places instead'),
+                ),
+              ],
+            ),
           ),
         ),
         const SizedBox(height: 8),
-        TextButton(
-          onPressed: _busy ? null : _runFirstScan,
-          child: const Text('Scan the usual places instead'),
-        ),
-        const SizedBox(height: 8),
-        TextButton(
-          onPressed: () => setState(() => _phase = _Phase.primer),
-          child: const Text('Back to the guide'),
+        Center(
+          child: TextButton(
+            onPressed: () => setState(() => _phase = _Phase.primer),
+            child: const Text('Back to the guide'),
+          ),
         ),
         const SizedBox(height: 24),
       ],

@@ -94,7 +94,13 @@ class _WorkbenchScreenState extends State<WorkbenchScreen> {
     _loadPaths();
   }
 
+  /// Store-compliance mode: the library is not scanned or shown. Read
+  /// here so the Games tab can honour it, and re-read when the switch on
+  /// the Compliance page changes it.
+  bool _complianceMode = false;
+
   Future<void> _loadPaths() async {
+    _complianceMode = await AppPrefs.getComplianceMode();
     var b = await AppPrefs.getBiosPath() ?? '';
     final g = await AppPrefs.getGamesFolder() ?? '';
     // The BIOS pref can go stale -- the card gets reorganised, or moves to
@@ -201,6 +207,34 @@ class _WorkbenchScreenState extends State<WorkbenchScreen> {
   Widget _contentForCategory() {
     switch (_category) {
       case WorkbenchCategory.games:
+        if (_complianceMode) {
+          return Center(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Icon(Icons.verified_outlined,
+                    size: 40, color: Colors.white38),
+                const SizedBox(height: 12),
+                const Padding(
+                  padding: EdgeInsets.symmetric(horizontal: 32),
+                  child: Text(
+                    'Store compliance mode is on: the app is using no user '
+                    'content, and your games library is not scanned or '
+                    'shown.',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(color: Colors.white54, height: 1.4),
+                  ),
+                ),
+                const SizedBox(height: 16),
+                OutlinedButton(
+                  onPressed: () => setState(
+                      () => _category = WorkbenchCategory.compliance),
+                  child: const Text('Open Compliance to switch it off'),
+                ),
+              ],
+            ),
+          );
+        }
         if (_gamesFolder.isEmpty) {
           return const Center(
               child: Text('Pick a games folder in 📂 Paths',
@@ -226,7 +260,10 @@ class _WorkbenchScreenState extends State<WorkbenchScreen> {
       case WorkbenchCategory.history:
         return const HistoryScreen();
       case WorkbenchCategory.compliance:
-        return ComplianceScreen(onRerunSetup: widget.onRerunSetup);
+        return ComplianceScreen(
+          onRerunSetup: widget.onRerunSetup,
+          onModeChanged: () => unawaited(_loadPaths()),
+        );
       case WorkbenchCategory.about:
         return const AboutScreen();
     }

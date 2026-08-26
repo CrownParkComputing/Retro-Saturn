@@ -153,6 +153,16 @@ class AppPrefs {
   static Future<void> setLeftHanded(bool v) => _p.setBool(_leftHandedKey, v);
 
   // ---- video ----
+  /// Store-compliance mode: the app uses no user content -- the library
+  /// is not scanned and the compliance statement is the front matter.
+  /// Selectable from the setup wizard and from the Compliance page, the
+  /// same shape as the rest of the family.
+  static const _complianceModeKey = 'compliance_mode';
+  static Future<bool> getComplianceMode() async =>
+      _p.getBool(_complianceModeKey) ?? false;
+  static Future<void> setComplianceMode(bool v) =>
+      _p.setBool(_complianceModeKey, v);
+
   /// Whether Delete in the library asks first. On by default; the switch
   /// to turn it off lives in Paths for people who trust their thumbs.
   static const _confirmDeleteKey = 'confirm_delete';
