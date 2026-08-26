@@ -18,6 +18,7 @@
 #include <android/log.h>
 #include <cstdio>
 #include <cstring>
+#include <thread>
 #include <vector>
 
 #define LOG_TAG "ymir-aaudio"
@@ -30,7 +31,40 @@ struct AaudioState {
     void          *bridge = nullptr;  /* YmirInstance* */
     std::atomic<int> muted{0};
     std::atomic<int> peak{0};
+    /* Set by the error callback when the device goes away; a detached
+     * reopen thread clears it once a new stream is up. */
+    std::atomic<bool> reopening{false};
 };
+
+static int32_t aaudio_start(void *user);
+
+/* Disconnects happen in normal use -- headphones unplugged, a Bluetooth
+ * speaker going away, a phone call taking the device. Left unhandled the
+ * stream simply stops and the game plays silently for the rest of the
+ * session, which reads as a bug in the emulator.
+ *
+ * AAudio forbids rebuilding the stream from this callback, so a detached
+ * thread closes the dead stream and opens a fresh one against whatever
+ * device the system now routes to. */
+static void aaudio_error_cb(AAudioStream *stream, void *user,
+                            aaudio_result_t error) {
+    (void)stream;
+    auto *st = (AaudioState *)user;
+    if (error != AAUDIO_ERROR_DISCONNECTED) return;
+    bool expected = false;
+    if (!st->reopening.compare_exchange_strong(expected, true)) return;
+    LOGW("audio device disconnected; reopening on the new route");
+    std::thread([st]() {
+        if (st->stream) {
+            AAudioStream_close(st->stream);
+            st->stream = nullptr;
+        }
+        if (aaudio_start(st) != 0) {
+            LOGE("could not reopen audio after disconnect; session is silent");
+        }
+        st->reopening.store(false);
+    }).detach();
+}
 
 /* Forward decl — implemented in ymir_bridge.cpp. */
 extern int32_t ymir_bridge_pull_audio(void *inst_v, int16_t *out, int32_t max_frames);
@@ -91,6 +125,7 @@ static int32_t aaudio_start(void *user) {
     AAudioStreamBuilder_setSharingMode(builder, AAUDIO_SHARING_MODE_EXCLUSIVE);
     AAudioStreamBuilder_setPerformanceMode(builder, AAUDIO_PERFORMANCE_MODE_LOW_LATENCY);
     AAudioStreamBuilder_setDataCallback(builder, aaudio_render_cb, st);
+    AAudioStreamBuilder_setErrorCallback(builder, aaudio_error_cb, st);
 
     rc = AAudioStreamBuilder_openStream(builder, &st->stream);
     AAudioStreamBuilder_delete(builder);
