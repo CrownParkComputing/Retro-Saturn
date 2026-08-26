@@ -19,6 +19,7 @@
 // small improvement of keeping dashes between words so the keys read
 // better and match the A-Z folder layout the bezel indexer uses.
 
+import 'dart:isolate';
 import 'dart:io';
 
 import 'package:path/path.dart' as p;
@@ -128,7 +129,16 @@ class LibraryScanner {
 
   /// Every supported disc image under [directoryPath], at any depth.
   /// A missing directory scans to nothing rather than throwing.
-  static LibraryScanResult scan(String directoryPath) {
+  ///
+  /// Runs on a background isolate: the recursive listSync walk can cross an
+  /// SD card, and on the UI isolate every busy moment of the card was a
+  /// dropped frame -- the stall class the Amiga live release taught us to
+  /// move off the UI thread entirely.
+  static Future<LibraryScanResult> scan(String directoryPath) =>
+      Isolate.run(() => scanSync(directoryPath));
+
+  /// The walk itself, synchronous, for the isolate (and for tests).
+  static LibraryScanResult scanSync(String directoryPath) {
     final dir = Directory(directoryPath);
     if (!dir.existsSync()) return LibraryScanResult.empty;
 

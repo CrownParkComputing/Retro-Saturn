@@ -8,6 +8,7 @@
 // it's ~/Ymir/{BIOS,Games}. iOS is file-import only.
 
 import 'dart:io';
+import 'dart:isolate';
 
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
@@ -110,7 +111,13 @@ class SetupScanService {
 
   /// Probe a folder for BIOS + game files. BIOS candidates = saturn*.bin
   /// or *.bin files with size exactly 524288 bytes (the IPL size).
-  static Future<ScanResult> scan(String folderPath) async {
+  static Future<ScanResult> scan(String folderPath) =>
+      // A background isolate: this recursive walk crosses the whole games
+      // folder (often an SD card) during the wizard, and async dir.list on
+      // the UI isolate still does its stat calls there.
+      Isolate.run(() => _scanOnIsolate(folderPath));
+
+  static Future<ScanResult> _scanOnIsolate(String folderPath) async {
     final bios = <String>[];
     final games = <MediaEntry>[];
 

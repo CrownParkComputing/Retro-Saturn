@@ -80,7 +80,7 @@ void main() {
       write('Sega/Nights/into dreams.iso');
       write('a/b/c/d/deep.mds');
 
-      final result = LibraryScanner.scan(root.path);
+      final result = LibraryScanner.scanSync(root.path);
 
       expect(namesOf(result), [
         'deep.mds',
@@ -101,7 +101,7 @@ void main() {
       write('cover.png');
       write('noextension');
 
-      final result = LibraryScanner.scan(root.path);
+      final result = LibraryScanner.scanSync(root.path);
 
       final byName = {for (final e in result.entries) e.displayName: e};
       expect(byName['game.chd']!.format, MediaFormat.chd);
@@ -122,7 +122,7 @@ void main() {
     test('derives display name, base name and bezel key from each file', () {
       write('Panzer Dragoon (USA) [v1.1].cue');
 
-      final result = LibraryScanner.scan(root.path);
+      final result = LibraryScanner.scanSync(root.path);
 
       expect(result.entries, hasLength(1));
       final entry = result.entries.single;
@@ -137,7 +137,7 @@ void main() {
     });
 
     test('a missing folder scans to an empty library, not a crash', () {
-      final result = LibraryScanner.scan(p.join(root.path, 'nope'));
+      final result = LibraryScanner.scanSync(p.join(root.path, 'nope'));
       expect(result.entries, isEmpty);
       expect(result.unreadableCount, 0);
     });
@@ -150,7 +150,7 @@ void main() {
       write('good.chd');
       write('empty.chd', contents: '');
 
-      final result = LibraryScanner.scan(root.path);
+      final result = LibraryScanner.scanSync(root.path);
 
       expect(namesOf(result), ['good.chd']);
       expect(result.unreadableCount, 1);
@@ -167,7 +167,7 @@ void main() {
       // scanner's own output must be dedupe-safe by construction.
       write('dupe.chd');
 
-      final result = LibraryScanner.scan(root.path);
+      final result = LibraryScanner.scanSync(root.path);
       final result2 = LibraryScanResult.dedup(LibraryScanResult.dedup(result));
       expect(result2.entries, hasLength(1));
     });
@@ -185,7 +185,7 @@ void main() {
         write('a/file.chd');
       }
 
-      final result = LibraryScanner.scan(root.path);
+      final result = LibraryScanner.scanSync(root.path);
       expect(result.entries, isNotEmpty);
     }, timeout: const Timeout(Duration(seconds: 5)));
   });

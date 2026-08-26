@@ -19,6 +19,14 @@
  *   - Button bits are inverted at the FFI boundary (Ymir reports
  *     1=released, 0=pressed; FFI takes 1=pressed).
  */
+#if defined(__linux__)
+#include <sys/resource.h>
+#include <sys/syscall.h>
+#include <unistd.h>
+#include <cerrno>
+#include <cstring>
+#include <cstdio>
+#endif
 #include "ymir_bridge.h"
 #include "audio_backend.h"
 
@@ -586,7 +594,30 @@ static void drain_mailbox(YmirInstance *inst) {
     for (auto &req : pending) apply_request(inst, req.get());
 }
 
+/* Lift the emulation thread above ordinary background work.
+ *
+ * The core runs in-process beside Flutter's UI and raster threads; at equal
+ * priority a busy launcher frame starves the audio producer and the sound
+ * breaks up -- the exact failure Retro-Amiga's live release reports were
+ * about, fixed there with the same call. -2 lifts this thread above default
+ * work while leaving the platform's audio callback (higher still) alone.
+ *
+ * An app may do this to its own threads: Android raises RLIMIT_NICE for app
+ * processes precisely so it can. Where it may not (an unprivileged desktop)
+ * the call fails and the emulator runs exactly as it did.
+ */
+static void raise_emulation_thread_priority(void) {
+#if defined(__linux__)
+    errno = 0;
+    if (setpriority(PRIO_PROCESS, (id_t)syscall(SYS_gettid), -2) != 0 && errno != 0) {
+        fprintf(stderr, "ymir worker: could not raise priority (%s)\n", strerror(errno));
+        return;
+    }
+#endif
+}
+
 static void worker_loop(YmirInstance *inst) {
+    raise_emulation_thread_priority();
     using clock = std::chrono::steady_clock;
     auto nextFrame = clock::now() + std::chrono::milliseconds(16);
     int32_t frameCount = 0;

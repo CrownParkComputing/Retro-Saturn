@@ -49,7 +49,7 @@ class _SaveStatesScreenState extends State<SaveStatesScreen> {
     setState(() => _loading = true);
     final found = <({MediaEntry entry, SaveSlot slot})>[];
     try {
-      final entries = LibraryScanner.scan(widget.gamesFolder).entries;
+      final entries = (await LibraryScanner.scan(widget.gamesFolder)).entries;
       for (final entry in entries) {
         for (final slot in await SaveStateService.slotsFor(entry)) {
           if (!slot.isEmpty) found.add((entry: entry, slot: slot));

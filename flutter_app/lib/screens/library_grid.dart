@@ -94,7 +94,7 @@ class _LibraryGridState extends State<LibraryGrid> {
     // The scan is fast on a real device but uses sync IO, so we hop to a
     // microtask rather than blocking a frame.
     await Future<void>.microtask(() {});
-    final raw = LibraryScanner.scan(path);
+    final raw = await LibraryScanner.scan(path);
     final result = LibraryScanResult.dedup(raw);
     if (!mounted) return;
     setState(() {
