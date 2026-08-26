@@ -338,11 +338,12 @@ class _SetupWizardScreenState extends State<SetupWizardScreen> {
                 const Divider(height: 28, color: Color(0xFF2B3340)),
                 const Text(
                   'SET UP MY OWN SATURN\n'
-                  'Your BIOS -- dumped from a console you own -- and your '
-                  'disc images. Choose the folder they live in and they are '
-                  'read in place: nothing is copied or moved, an SD card '
-                  'works like any other folder, and you see what was found '
-                  'before anything starts.',
+                  'Keep one folder -- call it Saturn -- with two folders '
+                  'inside: BIOS (your dumped BIOS .bin) and Games (your '
+                  'disc images). Choose that Saturn folder and everything '
+                  'is read in place: nothing is copied or moved, an SD '
+                  'card works like any other folder, and you see what was '
+                  'found before anything starts.',
                   style: TextStyle(color: Colors.white54, height: 1.4),
                 ),
                 const SizedBox(height: 10),
