@@ -3,6 +3,8 @@
 // constants grouped by feature. Add to this file rather than reading
 // SharedPreferences inline from screens.
 
+import 'dart:ui' show Offset;
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart' show visibleForTesting;
@@ -156,4 +158,43 @@ class AppPrefs {
 
   static bool get bezelEnabled => _p.getBool(_bezelEnabledKey) ?? true;
   static Future<void> setBezelEnabled(bool v) => _p.setBool(_bezelEnabledKey, v);
+
+  // --- On-screen control positions -------------------------------------
+
+  static const _controlPositionsKey = 'on_screen_control_positions';
+
+  /// Where each on-screen control cluster sits, as fractions of the play
+  /// area (0..1, centre of the control). Fractions rather than pixels so a
+  /// layout made in landscape still means the same place after a resize or
+  /// on the next device. Same contract as Retro-C64 and Retro-Spectrum.
+  static Future<Map<String, Offset>> getControlPositions() async {
+    final raw = _p.getString(_controlPositionsKey);
+    if (raw == null || raw.isEmpty) return const {};
+    try {
+      final decoded = jsonDecode(raw) as Map<String, dynamic>;
+      return {
+        for (final e in decoded.entries)
+          e.key: Offset(
+            ((e.value as List)[0] as num).toDouble(),
+            ((e.value as List)[1] as num).toDouble(),
+          ),
+      };
+    } catch (_) {
+      return const {};
+    }
+  }
+
+  static Future<void> setControlPosition(String id, Offset fraction) async {
+    final all = Map<String, Offset>.from(await getControlPositions());
+    all[id] = fraction;
+    await _p.setString(
+      _controlPositionsKey,
+      jsonEncode({
+        for (final e in all.entries) e.key: [e.value.dx, e.value.dy],
+      }),
+    );
+  }
+
+  static Future<void> clearControlPositions() =>
+      _p.remove(_controlPositionsKey);
 }

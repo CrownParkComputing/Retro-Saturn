@@ -46,6 +46,9 @@ class EmulatorScreen extends StatefulWidget {
   /// rendered).
   final bool showPadOverlay;
 
+  /// Layout mode for the pad overlay: clusters drag instead of press.
+  final bool editingLayout;
+
   const EmulatorScreen({
     super.key,
     required this.core,
@@ -54,6 +57,7 @@ class EmulatorScreen extends StatefulWidget {
     this.entry,
     this.resumeStatePath,
     this.showPadOverlay = false,
+    this.editingLayout = false,
   });
 
   @override
@@ -187,7 +191,7 @@ class _EmulatorScreenState extends State<EmulatorScreen> {
       // use for it, and two pointer-hungry overlays in one stack means the
       // upper one eats every event the lower one needs.
       if (widget.showPadOverlay && !showGun && !showMouse)
-        SaturnPadOverlay(core: widget.core),
+        SaturnPadOverlay(core: widget.core, editing: widget.editingLayout),
     ]);
   }
 }

@@ -65,6 +65,10 @@ class _EmulatorSessionScreenState extends State<EmulatorSessionScreen> {
 
   bool _padVisible = false;
 
+  /// Layout mode: the pad's clusters drag instead of press, and moves are
+  /// remembered. Session-only state, like the rest of the family.
+  bool _editingLayout = false;
+
   /// Controls shown, fading after a few seconds. The corner button is always
   /// reachable; this only governs the rail.
   bool _controlsVisible = true;
@@ -168,6 +172,7 @@ class _EmulatorSessionScreenState extends State<EmulatorSessionScreen> {
                 entry: widget.entry,
                 resumeStatePath: widget.resumeStatePath,
                 showPadOverlay: _padVisible,
+                editingLayout: _editingLayout,
               ),
             ),
             if (_menuOpen)
@@ -265,17 +270,32 @@ class _EmulatorSessionScreenState extends State<EmulatorSessionScreen> {
                       mainAxisSize: MainAxisSize.min,
                       children: <Widget>[
                         _tool(
-                          icon: _padVisible
-                              ? Icons.gamepad
-                              : Icons.gamepad_outlined,
+                          icon: Icons.videogame_asset,
                           label: 'Pad',
                           tip: _padVisible
                               ? 'Hide the on-screen pad'
                               : 'Show the on-screen pad',
                           active: _padVisible,
-                          onPressed: () =>
-                              setState(() => _padVisible = !_padVisible),
+                          onPressed: () => setState(() {
+                            _padVisible = !_padVisible;
+                            if (!_padVisible) _editingLayout = false;
+                          }),
                         ),
+                        // Only while the pad is up: moving controls that
+                        // are not on screen is a mode with nothing in it.
+                        if (_padVisible)
+                          _tool(
+                            icon: _editingLayout
+                                ? Icons.check
+                                : Icons.open_with,
+                            label: 'Layout',
+                            tip: _editingLayout
+                                ? 'Finish moving controls'
+                                : 'Move the on-screen controls',
+                            active: _editingLayout,
+                            onPressed: () => setState(
+                                () => _editingLayout = !_editingLayout),
+                          ),
                         _tool(
                           icon: Icons.settings,
                           label: 'Setup',
