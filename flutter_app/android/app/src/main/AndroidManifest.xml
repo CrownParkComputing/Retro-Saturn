@@ -1,5 +1,5 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
-    <!-- The library is read IN PLACE from wherever the user keeps it -- usually
+    <!-- The library is read IN PLACE from wherever the user keeps it - usually
          an SD card full of disc images ripped from their own collection. Scoped
          storage cannot reach a raw path there, and copying a 500 MB disc image
          per game into app storage is not an answer, so the app asks for
