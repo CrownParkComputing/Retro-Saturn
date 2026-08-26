@@ -88,6 +88,9 @@ class _EmulatorSessionScreenState extends State<EmulatorSessionScreen> {
     // duration and give them back on the way out. Sticky, because an edge
     // swipe on a handheld is easy to do by accident mid-game.
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
+    // The core is shared with the launcher and stays paused between
+    // sessions; entering one is what sets it running.
+    widget.core.setPresentationPaused(false);
     _restartControlsTimer();
   }
 
@@ -124,7 +127,9 @@ class _EmulatorSessionScreenState extends State<EmulatorSessionScreen> {
 
   /// Save and exit: snapshot to the workbench's session path, then leave.
   Future<void> _saveAndExit() async {
-    widget.core.setPresentationPaused(false);
+    // Keep the machine frozen (the menu already paused it) -- the worker
+    // serves the save request while paused.
+    widget.core.setPresentationPaused(true);
     final int result = widget.core.saveState(widget.saveStatePath);
     if (!mounted) return;
     if (result != 0) {
@@ -133,6 +138,11 @@ class _EmulatorSessionScreenState extends State<EmulatorSessionScreen> {
       ));
       return; // stay: leaving anyway would silently lose their place
     }
+    // The machine must actually STOP -- the core is shared with the
+    // launcher, and leaving it running meant the game kept playing
+    // (audio and all) behind the workbench. Presentation pause stops
+    // both the emulation and the audio stream.
+    widget.core.setPresentationPaused(true);
     Navigator.of(context).pop(SessionExit.paused);
   }
 
@@ -140,7 +150,12 @@ class _EmulatorSessionScreenState extends State<EmulatorSessionScreen> {
   /// most expect to be able to pick it up again -- then leave with nothing
   /// else offered.
   void _close() {
-    widget.core.setPresentationPaused(false);
+    // Pause FIRST: the machine must actually stop -- the core is shared
+    // with the launcher, and leaving it running meant the game kept
+    // playing (audio and all) behind the workbench. Presentation pause
+    // stops both the emulation and the audio stream, and the worker
+    // still serves the save request below while paused.
+    widget.core.setPresentationPaused(true);
     final MediaEntry? leaving = widget.entry;
     if (leaving != null) {
       final snapshot = widget.core.framebuffer;
