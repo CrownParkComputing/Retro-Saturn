@@ -1,6 +1,8 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:path/path.dart' as p;
 import 'package:flutter/services.dart';
 
 import '../data/media_entry.dart';
@@ -66,6 +68,7 @@ class _EmulatorSessionScreenState extends State<EmulatorSessionScreen> {
 
   bool _padVisible = false;
 
+
   /// Stretch to fill, persisted like the Amiga and ST front ends.
   bool _fillScreen = AppPrefs.screenFill;
 
@@ -91,7 +94,89 @@ class _EmulatorSessionScreenState extends State<EmulatorSessionScreen> {
     // The core is shared with the launcher and stays paused between
     // sessions; entering one is what sets it running.
     widget.core.setPresentationPaused(false);
+    AppPrefs.getShowPadDefault().then((bool v) {
+      if (mounted && v) setState(() => _padVisible = true);
+    });
+    _findSiblingDiscs();
     _restartControlsTimer();
+  }
+
+  /// Other discs of the SAME game, for the rail's Disk tool. Multi-disc
+  /// Saturn titles ship as "Title (Disc 1)", "Title (Disc 2)"...; strip
+  /// the disc marker and everything in the folder that shares the stem is
+  /// this game's set.
+  List<String> _siblingDiscs = const [];
+
+  static final RegExp _discMarker = RegExp(
+      r'[\(\[]\s*(disc|disk|cd)\s*\d+[^\)\]]*[\)\]]',
+      caseSensitive: false);
+
+  static String _discStem(String path) => p
+      .basenameWithoutExtension(path)
+      .replaceAll(_discMarker, '')
+      .replaceAll(RegExp(r'\s+'), ' ')
+      .trim()
+      .toLowerCase();
+
+  void _findSiblingDiscs() {
+    final MediaEntry? entry = widget.entry;
+    if (entry == null) return;
+    if (!_discMarker.hasMatch(p.basename(entry.path))) return;
+    final stem = _discStem(entry.path);
+    try {
+      final dir = Directory(p.dirname(entry.path));
+      final discs = <String>[];
+      for (final f in dir.listSync(followLinks: false)) {
+        if (f is! File) continue;
+        final ext = p.extension(f.path).toLowerCase();
+        if (!const {'.chd', '.cue', '.iso', '.mds', '.ccd'}.contains(ext)) {
+          continue;
+        }
+        if (_discStem(f.path) == stem) discs.add(f.path);
+      }
+      discs.sort();
+      if (discs.length > 1 && mounted) {
+        setState(() => _siblingDiscs = discs);
+      }
+    } on FileSystemException {
+      // A folder that cannot be listed just means no swap tool.
+    }
+  }
+
+  /// The rail's Disk tool: pick another disc of this game and put it in
+  /// the drive -- the machine keeps running, exactly like swapping a CD.
+  Future<void> _swapDisc() async {
+    final String? chosen = await showModalBottomSheet<String>(
+      context: context,
+      backgroundColor: const Color(0xFF13161F),
+      builder: (BuildContext context) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const ListTile(title: Text('Swap disc')),
+            const Divider(height: 1),
+            for (final d in _siblingDiscs)
+              ListTile(
+                leading: Icon(
+                  d == widget.entry?.path
+                      ? Icons.album
+                      : Icons.album_outlined,
+                ),
+                title: Text(p.basename(d),
+                    maxLines: 1, overflow: TextOverflow.ellipsis),
+                onTap: () => Navigator.pop(context, d),
+              ),
+          ],
+        ),
+      ),
+    );
+    if (chosen == null || !mounted) return;
+    final int rc = widget.core.loadDisc(chosen);
+    if (rc != 0 && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not load that disc (error $rc).')),
+      );
+    }
   }
 
   @override
@@ -308,6 +393,13 @@ class _EmulatorSessionScreenState extends State<EmulatorSessionScreen> {
                             AppPrefs.setScreenFill(_fillScreen);
                           },
                         ),
+                        if (_siblingDiscs.length > 1)
+                          _tool(
+                            icon: Icons.album,
+                            label: 'Disk',
+                            tip: 'Swap to another disc of this game',
+                            onPressed: () => unawaited(_swapDisc()),
+                          ),
                         _tool(
                           icon: Icons.videogame_asset,
                           label: 'Pad',

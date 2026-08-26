@@ -1,4 +1,5 @@
-// audio_settings_screen.dart — Audio configuration. The Ymir bridge
+// audio_settings_screen.dart — The A/V page: display defaults (screen
+// fill, on-screen pad) plus audio configuration. The Ymir bridge
 // exposes a mute toggle and a read-only audio level meter; the rail
 // gets a dedicated destination so the user can flip the mute without
 // opening the in-game settings drawer. The meter's live tail is shown
@@ -7,6 +8,7 @@
 
 import 'package:flutter/material.dart';
 import 'package:retro_saturn/ffi/ymir_core.dart';
+import 'package:retro_saturn/services/app_prefs.dart';
 
 class AudioSettingsScreen extends StatefulWidget {
   final YmirCore core;
@@ -18,11 +20,16 @@ class AudioSettingsScreen extends StatefulWidget {
 
 class _AudioSettingsScreenState extends State<AudioSettingsScreen> {
   bool _muted = false;
+  bool _fill = AppPrefs.screenFill;
+  bool _padDefault = false;
 
   @override
   void initState() {
     super.initState();
     _muted = widget.core.audioMuted;
+    AppPrefs.getShowPadDefault().then((v) {
+      if (mounted) setState(() => _padDefault = v);
+    });
   }
 
   void _setMuted(bool v) {
@@ -32,17 +39,48 @@ class _AudioSettingsScreenState extends State<AudioSettingsScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: const Color(0xFF050607),
-      appBar: AppBar(title: const Text('🔊 Audio')),
-      body: ListView(padding: const EdgeInsets.all(16), children: [
+    return ListView(
+      padding: const EdgeInsets.all(16),
+      children: [
+        // Display defaults live HERE, on the launcher side, so they can be
+        // set before a game starts -- the session rail can still change
+        // them mid-game.
+        const _Section('Screen'),
+        SwitchListTile(
+          title: const Text('Stretch to fill the screen'),
+          subtitle: const Text(
+            "16:9 widescreen stretch instead of the Saturn's 4:3 shape. "
+            'The Fill tool on the in-game rail changes this too.',
+            style: TextStyle(fontSize: 11, color: Colors.white54),
+          ),
+          value: _fill,
+          onChanged: (v) {
+            AppPrefs.setScreenFill(v);
+            setState(() => _fill = v);
+          },
+        ),
+        SwitchListTile(
+          title: const Text('Show the on-screen pad'),
+          subtitle: const Text(
+            'Whether a new session starts with the touch pad visible. '
+            'The Pad tool on the in-game rail toggles it mid-game.',
+            style: TextStyle(fontSize: 11, color: Colors.white54),
+          ),
+          value: _padDefault,
+          onChanged: (v) {
+            AppPrefs.setShowPadDefault(v);
+            setState(() => _padDefault = v);
+          },
+        ),
+        const SizedBox(height: 24),
         const _Section('Output'),
         SwitchListTile(
           title: const Text('Mute'),
           subtitle: const Text(
-              'Silences the emulated SCSP output. The core keeps running, '
-              'so un-muting snaps back to where the emulation is now.',
-              style: TextStyle(fontSize: 11, color: Colors.white54)),
+            'Silences the emulated SCSP output. The core keeps running, '
+            'so un-muting snaps back to where the emulation is now.',
+            style: TextStyle(fontSize: 11, color: Colors.white54),
+          ),
           value: _muted,
           onChanged: _setMuted,
         ),
@@ -62,11 +100,15 @@ class _AudioSettingsScreenState extends State<AudioSettingsScreen> {
         ),
         const SizedBox(height: 24),
         const _Section('Bridge status'),
-        Text('Runtime: ${widget.core.status}',
-            style: const TextStyle(fontSize: 12, fontFamily: 'monospace')),
-        Text('FPS: ${widget.core.fps}',
-            style: const TextStyle(fontSize: 12, fontFamily: 'monospace')),
-      ]),
+        Text(
+          'Runtime: ${widget.core.status}',
+          style: const TextStyle(fontSize: 12, fontFamily: 'monospace'),
+        ),
+        Text(
+          'FPS: ${widget.core.fps}',
+          style: const TextStyle(fontSize: 12, fontFamily: 'monospace'),
+        ),
+      ],
     );
   }
 }
@@ -78,11 +120,14 @@ class _Section extends StatelessWidget {
   Widget build(BuildContext context) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 4),
-      child: Text(label,
-          style: const TextStyle(
-              fontSize: 11,
-              color: Colors.white54,
-              fontWeight: FontWeight.bold)),
+      child: Text(
+        label,
+        style: const TextStyle(
+          fontSize: 11,
+          color: Colors.white54,
+          fontWeight: FontWeight.bold,
+        ),
+      ),
     );
   }
 }
@@ -102,18 +147,20 @@ class _AudioLevelBar extends StatelessWidget {
       ),
       clipBehavior: Clip.antiAlias,
       child: LayoutBuilder(
-        builder: (context, constraints) => Row(children: [
-          AnimatedContainer(
-            duration: const Duration(milliseconds: 100),
-            width: audioBarFillWidth(constraints.maxWidth, level, muted),
-            decoration: BoxDecoration(
-              gradient: const LinearGradient(
-                colors: [Color(0xFF4040E0), Color(0xFF60A0FF)],
+        builder: (context, constraints) => Row(
+          children: [
+            AnimatedContainer(
+              duration: const Duration(milliseconds: 100),
+              width: audioBarFillWidth(constraints.maxWidth, level, muted),
+              decoration: BoxDecoration(
+                gradient: const LinearGradient(
+                  colors: [Color(0xFF4040E0), Color(0xFF60A0FF)],
+                ),
+                borderRadius: BorderRadius.circular(3),
               ),
-              borderRadius: BorderRadius.circular(3),
             ),
-          ),
-        ]),
+          ],
+        ),
       ),
     );
   }

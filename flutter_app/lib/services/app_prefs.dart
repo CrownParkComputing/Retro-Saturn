@@ -153,6 +153,20 @@ class AppPrefs {
   static Future<void> setLeftHanded(bool v) => _p.setBool(_leftHandedKey, v);
 
   // ---- video ----
+  /// Whether Delete in the library asks first. On by default; the switch
+  /// to turn it off lives in Paths for people who trust their thumbs.
+  static const _confirmDeleteKey = 'confirm_delete';
+  static Future<bool> getConfirmDelete() async =>
+      _p.getBool(_confirmDeleteKey) ?? true;
+  static Future<void> setConfirmDelete(bool v) =>
+      _p.setBool(_confirmDeleteKey, v);
+
+  /// Whether a new session starts with the on-screen pad visible.
+  static const _showPadKey = 'show_pad_default';
+  static Future<bool> getShowPadDefault() async =>
+      _p.getBool(_showPadKey) ?? false;
+  static Future<void> setShowPadDefault(bool v) => _p.setBool(_showPadKey, v);
+
   static const _screenFillKey = 'screen_fill';
   static bool get screenFill => _p.getBool(_screenFillKey) ?? false;
   static Future<void> setScreenFill(bool v) => _p.setBool(_screenFillKey, v);

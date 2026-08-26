@@ -5,6 +5,7 @@
 // the production rail slots).
 
 import 'package:flutter/material.dart';
+import 'package:retro_saturn/screens/getting_started.dart';
 import 'package:retro_saturn/screens/logs_screen.dart';
 
 class AboutScreen extends StatelessWidget {
@@ -12,24 +13,71 @@ class AboutScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: const Color(0xFF050607),
-      appBar: AppBar(title: const Text('ℹ️ About')),
-      body: ListView(padding: const EdgeInsets.all(16), children: [
-        const Center(child: Icon(Icons.videogame_asset, size: 80, color: Colors.white70)),
+    return ListView(
+      padding: const EdgeInsets.all(16),
+      children: [
+        const Center(
+          child: Icon(Icons.videogame_asset, size: 80, color: Colors.white70),
+        ),
         const SizedBox(height: 12),
-        const Center(child: Text('Retro-Saturn',
-            style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold))),
-        const Center(child: Text('Sega Saturn emulator',
-            style: TextStyle(color: Colors.white54, fontSize: 13))),
+        const Center(
+          child: Text(
+            'Retro-Saturn',
+            style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+          ),
+        ),
+        const Center(
+          child: Text(
+            'Sega Saturn emulator',
+            style: TextStyle(color: Colors.white54, fontSize: 13),
+          ),
+        ),
         const SizedBox(height: 16),
         const _Bullet('Native C++ core: ymir-core (StrikerX3/Ymir, GPLv3)'),
         const _Bullet('Frontend: Flutter 3.41 / Dart 3.11'),
         const _Bullet('Bridge: dart:ffi + plain C ABI'),
         const _Bullet('Platforms: Linux x64, Android arm64-v8a, iOS arm64'),
         const SizedBox(height: 24),
-        const Text('Diagnostics',
-            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+        const Text(
+          'Help',
+          style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+        ),
+        const SizedBox(height: 4),
+        Card(
+          margin: EdgeInsets.zero,
+          child: ListTile(
+            leading: const Icon(Icons.help_outline),
+            title: const Text('Getting started'),
+            subtitle: const Text(
+              'What a Saturn needs, where files go, and how to play -- '
+              'the same guide setup shows, re-readable any time.',
+              style: TextStyle(fontSize: 11, color: Colors.white54),
+            ),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () => Navigator.of(context).push(
+              MaterialPageRoute(
+                builder: (BuildContext context) => Scaffold(
+                  backgroundColor: const Color(0xFF050607),
+                  body: SafeArea(
+                    child: GettingStartedGuide(
+                      steps: [
+                        GettingStartedSteps.whatYouNeed(),
+                        GettingStartedSteps.whereFilesGo(),
+                        GettingStartedSteps.firstGame(),
+                      ],
+                      onClose: () => Navigator.of(context).pop(),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+        const SizedBox(height: 24),
+        const Text(
+          'Diagnostics',
+          style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+        ),
         const SizedBox(height: 4),
         Card(
           margin: EdgeInsets.zero,
@@ -37,27 +85,31 @@ class AboutScreen extends StatelessWidget {
             leading: const Icon(Icons.terminal),
             title: const Text('App log'),
             subtitle: const Text(
-                'Tail of the bridge log. Useful for diagnosing BIOS / disc '
-                'load / NVRAM save failures without adb logcat.',
-                style: TextStyle(fontSize: 11, color: Colors.white54)),
-            trailing: const Icon(Icons.chevron_right),
-            onTap: () => Navigator.of(context).push(
-              MaterialPageRoute(builder: (_) => const LogsScreen()),
+              'Tail of the bridge log. Useful for diagnosing BIOS / disc '
+              'load / NVRAM save failures without adb logcat.',
+              style: TextStyle(fontSize: 11, color: Colors.white54),
             ),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () => Navigator.of(
+              context,
+            ).push(MaterialPageRoute(builder: (_) => const LogsScreen())),
           ),
         ),
         const SizedBox(height: 24),
-        const Text('License',
-            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+        const Text(
+          'License',
+          style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+        ),
         const SizedBox(height: 4),
         const Text(
-            'This program is free software; you can redistribute it and/or '
-            'modify it under the terms of the GNU GPLv3 as published by the '
-            'Free Software Foundation. The Saturn BIOS, game disc images, '
-            'and other commercial content are copyrighted by their respective '
-            'owners and are not bundled with this app.',
-            style: TextStyle(fontSize: 12)),
-      ]),
+          'This program is free software; you can redistribute it and/or '
+          'modify it under the terms of the GNU GPLv3 as published by the '
+          'Free Software Foundation. The Saturn BIOS, game disc images, '
+          'and other commercial content are copyrighted by their respective '
+          'owners and are not bundled with this app.',
+          style: TextStyle(fontSize: 12),
+        ),
+      ],
     );
   }
 }
@@ -69,10 +121,13 @@ class _Bullet extends StatelessWidget {
   Widget build(BuildContext context) {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 2),
-      child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        const Text('• ', style: TextStyle(color: Colors.white54)),
-        Expanded(child: Text(text, style: const TextStyle(fontSize: 12))),
-      ]),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text('• ', style: TextStyle(color: Colors.white54)),
+          Expanded(child: Text(text, style: const TextStyle(fontSize: 12))),
+        ],
+      ),
     );
   }
 }

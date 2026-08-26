@@ -10,9 +10,14 @@
 // matter, and the bezel A-Z folder layout already gives letter-based
 // organisation.
 
+import 'dart:async';
+import 'dart:io';
+
 import 'package:flutter/material.dart';
+import 'package:path/path.dart' as p;
 
 import '../data/media_entry.dart';
+import '../services/app_prefs.dart';
 import '../services/library_scanner.dart';
 import '../widgets/media_card.dart';
 
@@ -72,6 +77,46 @@ class _LibraryGridState extends State<LibraryGrid> {
   LibraryScanResult _scan = LibraryScanResult.empty;
   bool _scanning = false;
 
+  /// What went wrong on the last scan, if anything -- surfaced rather than
+  /// swallowed, because "no games found" and "the scan failed" need
+  /// different fixes.
+  String? _scanError;
+
+  /// Search waits for the typing to pause. Filtering per keystroke walks
+  /// the whole library once per character, which reads as a stiff keyboard
+  /// on a large collection -- the lesson Retro-Amiga's library learned.
+  Timer? _searchDebounce;
+
+  /// Cached derivations, recomputed only when their inputs change --
+  /// walking the entry list inside getters called from build() was the
+  /// other half of the stiff keyboard.
+  List<MediaEntry> _filteredCache = const [];
+  Map<String, int> _countsCache = const {'All': 0};
+
+  void _recompute() {
+    final q = _search.trim().toLowerCase();
+    _filteredCache = _scan.entries.where((e) {
+      final letterOk =
+          _filter == 'All' || _firstCharLower(e) == _filter.toLowerCase();
+      final searchOk = q.isEmpty ||
+          e.displayName.toLowerCase().contains(q) ||
+          e.baseName.toLowerCase().contains(q);
+      return letterOk && searchOk;
+    }).toList();
+    final counts = <String, int>{'All': _scan.entries.length};
+    for (final e in _scan.entries) {
+      final c = _firstCharLower(e);
+      counts[c] = (counts[c] ?? 0) + 1;
+    }
+    _countsCache = counts;
+  }
+
+  @override
+  void dispose() {
+    _searchDebounce?.cancel();
+    super.dispose();
+  }
+
   @override
   void initState() {
     super.initState();
@@ -90,44 +135,164 @@ class _LibraryGridState extends State<LibraryGrid> {
       setState(() => _scan = LibraryScanResult.empty);
       return;
     }
-    setState(() => _scanning = true);
-    // The scan is fast on a real device but uses sync IO, so we hop to a
-    // microtask rather than blocking a frame.
-    await Future<void>.microtask(() {});
-    final raw = await LibraryScanner.scan(path);
-    final result = LibraryScanResult.dedup(raw);
-    if (!mounted) return;
     setState(() {
-      _scan = result;
-      _scanning = false;
+      _scanning = true;
+      _scanError = null;
+    });
+    try {
+      final raw = await LibraryScanner.scan(path);
+      final result = LibraryScanResult.dedup(raw);
+      if (!mounted) return;
+      setState(() {
+        _scan = result;
+        _scanning = false;
+        _recompute();
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _scanning = false;
+        _scanError = 'The scan failed: $e';
+      });
+    }
+  }
+
+  void _setSearch(String v) {
+    _search = v;
+    _searchDebounce?.cancel();
+    _searchDebounce = Timer(const Duration(milliseconds: 150), () {
+      if (mounted) setState(_recompute);
     });
   }
 
-  /// Apply search + letter filter on top of [_scan].
-  List<MediaEntry> get _filtered {
-    final q = _search.trim().toLowerCase();
-    return _scan.entries.where((e) {
-      final letterOk = _filter == 'All' || _firstCharLower(e) == _filter.toLowerCase();
-      final searchOk = q.isEmpty ||
-          e.displayName.toLowerCase().contains(q) ||
-          e.baseName.toLowerCase().contains(q);
-      return letterOk && searchOk;
-    }).toList();
+  void _setTab(String tab) {
+    setState(() {
+      _tab = tab;
+      _recompute();
+    });
   }
 
-  /// Count entries per letter tab. Letters with zero matches are hidden
-  /// from the tab row, keeping the strip short on small libraries.
-  Map<String, int> get _counts {
-    final result = <String, int>{'All': _scan.entries.length};
-    for (final e in _scan.entries) {
-      final c = _firstCharLower(e);
-      result[c] = (result[c] ?? 0) + 1;
+  /// Long-press on a card: the per-title actions. Play is the same as a
+  /// tap; Rename and Delete act on the file itself and rescan.
+  Future<void> _showEntryActions(MediaEntry entry) async {
+    final action = await showModalBottomSheet<String>(
+      context: context,
+      backgroundColor: const Color(0xFF13161F),
+      builder: (BuildContext context) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              title: Text(entry.displayName,
+                  maxLines: 1, overflow: TextOverflow.ellipsis),
+              subtitle: Text(entry.path,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style:
+                      const TextStyle(fontSize: 11, color: Colors.white38)),
+            ),
+            const Divider(height: 1),
+            ListTile(
+              leading: const Icon(Icons.play_arrow),
+              title: const Text('Play'),
+              onTap: () => Navigator.pop(context, 'play'),
+            ),
+            ListTile(
+              leading: const Icon(Icons.drive_file_rename_outline),
+              title: const Text('Rename file'),
+              onTap: () => Navigator.pop(context, 'rename'),
+            ),
+            ListTile(
+              leading: const Icon(Icons.delete_outline),
+              title: const Text('Delete file'),
+              onTap: () => Navigator.pop(context, 'delete'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (!mounted || action == null) return;
+    switch (action) {
+      case 'play':
+        widget.onLaunch(entry);
+      case 'rename':
+        await _renameEntry(entry);
+      case 'delete':
+        await _deleteEntry(entry);
     }
-    return result;
   }
+
+  Future<void> _renameEntry(MediaEntry entry) async {
+    final controller = TextEditingController(text: p.basename(entry.path));
+    final newName = await showDialog<String>(
+      context: context,
+      builder: (BuildContext context) => AlertDialog(
+        title: const Text('Rename file'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          decoration: const InputDecoration(labelText: 'File name'),
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Cancel')),
+          FilledButton(
+              onPressed: () => Navigator.pop(context, controller.text.trim()),
+              child: const Text('Rename')),
+        ],
+      ),
+    );
+    if (newName == null || newName.isEmpty || !mounted) return;
+    try {
+      final target = p.join(p.dirname(entry.path), newName);
+      if (File(target).existsSync()) {
+        throw FileSystemException('a file with that name already exists');
+      }
+      await File(entry.path).rename(target);
+      await _rescan();
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text('Could not rename: $e')));
+    }
+  }
+
+  Future<void> _deleteEntry(MediaEntry entry) async {
+    if (await AppPrefs.getConfirmDelete()) {
+      if (!mounted) return;
+      final sure = await showDialog<bool>(
+        context: context,
+        builder: (BuildContext context) => AlertDialog(
+          title: const Text('Delete this file?'),
+          content: Text('${p.basename(entry.path)} will be deleted from '
+              'disk. This cannot be undone.'),
+          actions: [
+            TextButton(
+                onPressed: () => Navigator.pop(context, false),
+                child: const Text('Cancel')),
+            FilledButton(
+                onPressed: () => Navigator.pop(context, true),
+                child: const Text('Delete')),
+          ],
+        ),
+      );
+      if (sure != true) return;
+    }
+    if (!mounted) return;
+    try {
+      await File(entry.path).delete();
+      await _rescan();
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text('Could not delete: $e')));
+    }
+  }
+
 
   Widget _buildTabs() {
-    final counts = _counts;
+    final counts = _countsCache;
     final tabs = ['All', ..._sortTabs]
         .where((t) => counts[t] != null && counts[t]! > 0)
         .toList();
@@ -148,7 +313,7 @@ class _LibraryGridState extends State<LibraryGrid> {
               label: tab,
               count: counts[tab] ?? 0,
               selected: tab == _filter,
-              onTap: () => setState(() => _tab = tab),
+              onTap: () => _setTab(tab),
             ),
             const SizedBox(width: 4),
           ],
@@ -173,17 +338,30 @@ class _LibraryGridState extends State<LibraryGrid> {
         child: CircularProgressIndicator(),
       );
     }
-    final entries = _filtered;
+    final entries = _filteredCache;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
+        if (_scanError != null)
+          Container(
+            margin: const EdgeInsets.fromLTRB(8, 4, 8, 0),
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+            decoration: BoxDecoration(
+              color: Colors.orange.withValues(alpha: 0.12),
+              borderRadius: BorderRadius.circular(4),
+              border: Border.all(color: Colors.orangeAccent),
+            ),
+            child: Text(_scanError!,
+                style: const TextStyle(
+                    color: Colors.orangeAccent, fontSize: 11)),
+          ),
         _buildTabs(),
         Padding(
           padding: const EdgeInsets.fromLTRB(8, 4, 8, 4),
           child: SizedBox(
             height: 32,
             child: TextField(
-              onChanged: (v) => setState(() => _search = v),
+              onChanged: _setSearch,
               style: const TextStyle(color: Colors.white, fontSize: 12),
               decoration: const InputDecoration(
                 hintText: 'Search games...',
@@ -199,13 +377,33 @@ class _LibraryGridState extends State<LibraryGrid> {
         ),
         Padding(
           padding: const EdgeInsets.fromLTRB(8, 0, 8, 2),
-          child: Text(
-            _scan.entries.isEmpty
-                ? 'No games found. Supported: CHD, CUE, MDS, CCD, ISO.'
-                : '${entries.length} of ${_scan.entries.length} | ${_scan.unreadableCount} unreadable',
-            style: const TextStyle(
-                color: Color(0xFF6D7689), fontSize: 10),
-          ),
+          child: Row(children: [
+            Expanded(
+              child: Text(
+                _scan.entries.isEmpty
+                    ? 'No games found. Supported: CHD, CUE, MDS, CCD, ISO.'
+                    : '${entries.length} of ${_scan.entries.length} | ${_scan.unreadableCount} unreadable',
+                style:
+                    const TextStyle(color: Color(0xFF6D7689), fontSize: 10),
+              ),
+            ),
+            // Rescan lives IN the library: files change under the app
+            // (a copy finishes, a card is re-inserted), and the trip to
+            // Paths was the long way round.
+            InkWell(
+              onTap: _scanning ? null : _rescan,
+              child: const Padding(
+                padding: EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                child: Row(mainAxisSize: MainAxisSize.min, children: [
+                  Icon(Icons.refresh, size: 12, color: Color(0xFF6D7689)),
+                  SizedBox(width: 3),
+                  Text('Rescan',
+                      style: TextStyle(
+                          color: Color(0xFF6D7689), fontSize: 10)),
+                ]),
+              ),
+            ),
+          ]),
         ),
         Expanded(
           child: entries.isEmpty
@@ -234,6 +432,7 @@ class _LibraryGridState extends State<LibraryGrid> {
                       return MediaCard(
                         entry: entry,
                         onTap: () => widget.onLaunch(entry),
+                        onLongPress: () => _showEntryActions(entry),
                       );
                     },
                   );

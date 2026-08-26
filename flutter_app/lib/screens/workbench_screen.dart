@@ -338,15 +338,6 @@ class _WorkbenchScreenState extends State<WorkbenchScreen> {
     );
   }
 
-  /// Twice-a-second refresh for the runtime strip. Started when a
-  /// session opens, stopped when it ends. FPS and audio level don't
-  /// move fast enough to justify a per-frame poll, and the framebuffer
-  /// view's own rebuild storm would burn battery for no UI benefit.
-  @override
-  void dispose() {
-    super.dispose();
-  }
-
   Widget _contentPanel() {
     return Container(
       padding: const EdgeInsets.all(8),
@@ -365,22 +356,9 @@ class _WorkbenchScreenState extends State<WorkbenchScreen> {
     );
   }
 
-  /// The in-emulator panel. Extracted so [_contentPanel] and the
-  /// Resume destination can both render the same embedded framebuffer
-  /// view -- the rail's auto-resume on the Resume entry flips
-  /// _inEmulator true, and the user then sees this same panel rather
-  /// than a separate "resumed" screen.
-  /// The running machine, edge to edge, with the status row floating over the
-  /// foot of the picture.
-  ///
-  /// It is the status row ITSELF that floats, not a second copy of half of
-  /// it: that row already carries the hamburger, the title, the FPS and audio
-  /// meters and the in-game toolbar, so reusing it keeps the fullscreen
-  /// chrome and the windowed chrome the same chrome, with one hamburger that
-  /// has one behaviour.
-  ///
-  /// Bottom rather than top, matching where the row sits everywhere else in
-  /// this app and in the Amiga, C64 and DOSBox front ends.
+  /// "Paused: <title>" banner above the workbench content: the way back
+  /// into a session left with Save-and-exit. Same role as Retro-Dosbox's
+  /// banner and Retro-C64's Resume screen.
   Widget _resumableBanner() {
     final entry = _pausedSession!;
     return Container(
@@ -417,8 +395,6 @@ class _WorkbenchScreenState extends State<WorkbenchScreen> {
     );
   }
 
-  /// The Core status block that used to be baked into the rail's own class.
-  /// It lives in the canonical Sidebar's footer slot now -- which is exactly
 }
 
 /// Sidebar nav matching the C64-Retro layout. Width computed from

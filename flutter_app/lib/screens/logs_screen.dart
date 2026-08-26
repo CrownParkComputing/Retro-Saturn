@@ -2,6 +2,8 @@
 // Useful for debugging BIOS boot / disc load / NVRAM save crashes
 // without needing adb logcat.
 
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:retro_saturn/services/app_log.dart';
@@ -17,16 +19,34 @@ class _LogsScreenState extends State<LogsScreen> {
   String _text = '(loading…)';
   bool _busy = false;
 
+  /// The log updates itself while the screen is open -- pressing Refresh
+  /// to see whether anything happened was the tell that it should. 2 Hz is
+  /// plenty for reading and free next to the emulator's own load.
+  Timer? _tail;
+
   @override
   void initState() {
     super.initState();
     _refresh();
+    _tail = Timer.periodic(const Duration(milliseconds: 500), (_) {
+      if (!_busy) _refresh(silent: true);
+    });
   }
 
-  Future<void> _refresh() async {
-    setState(() => _busy = true);
+  @override
+  void dispose() {
+    _tail?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _refresh({bool silent = false}) async {
+    if (!silent) setState(() => _busy = true);
     final text = await AppLog.read();
     if (!mounted) return;
+    if (text == _text && silent) {
+      _busy = false;
+      return;
+    }
     setState(() {
       _text = text;
       _busy = false;
@@ -54,8 +74,15 @@ class _LogsScreenState extends State<LogsScreen> {
           IconButton(
             tooltip: 'Copy to clipboard',
             icon: const Icon(Icons.copy, size: 18),
-            onPressed: _text.isEmpty ? null : () => Clipboard.setData(
-                ClipboardData(text: _text)),
+            onPressed: _text.isEmpty
+                ? null
+                : () {
+                    Clipboard.setData(ClipboardData(text: _text));
+                    // Feedback, or the button reads as doing nothing.
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('Log copied.')),
+                    );
+                  },
           ),
           IconButton(
             tooltip: 'Clear log',

@@ -20,14 +20,19 @@ class InputSettingsScreen extends StatefulWidget {
 class _InputSettingsScreenState extends State<InputSettingsScreen> {
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: const Color(0xFF050607),
-      appBar: AppBar(title: const Text('🕹️ Input')),
-      body: ListView(padding: const EdgeInsets.all(16), children: [
+    return ListView(
+      padding: const EdgeInsets.all(16),
+      children: [
         const Padding(
           padding: EdgeInsets.only(bottom: 8),
-          child: Text('Peripherals',
-              style: TextStyle(fontSize: 11, color: Colors.white54, fontWeight: FontWeight.bold)),
+          child: Text(
+            'Peripherals',
+            style: TextStyle(
+              fontSize: 11,
+              color: Colors.white54,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
         ),
         PeripheralSelector(core: widget.core, port: 1),
         const SizedBox(height: 12),
@@ -35,8 +40,14 @@ class _InputSettingsScreenState extends State<InputSettingsScreen> {
         const SizedBox(height: 24),
         const Padding(
           padding: EdgeInsets.only(bottom: 8),
-          child: Text('Saturn pad buttons',
-              style: TextStyle(fontSize: 11, color: Colors.white54, fontWeight: FontWeight.bold)),
+          child: Text(
+            'Saturn pad buttons',
+            style: TextStyle(
+              fontSize: 11,
+              color: Colors.white54,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
         ),
         Card(
           child: Padding(
@@ -58,21 +69,26 @@ class _InputSettingsScreenState extends State<InputSettingsScreen> {
         Card(
           child: Padding(
             padding: const EdgeInsets.all(12),
-            child: Row(children: [
-              const Icon(Icons.gamepad, size: 18),
-              const SizedBox(width: 8),
-              const Expanded(child: Text(
-                  'Gamepad input uses the platform gamepads plugin. Connect a '
-                  'Bluetooth / USB Xbox-style controller and the d-pad, A/B/X/Y, '
-                  'L/R + Start are mapped to Saturn buttons automatically. '
-                  'Per-peripheral semantics (analog stick on 3D pad / wheel on '
-                  'Arcade Racer / aim on Virtua Gun) are picked from the peripheral '
-                  'type above.',
-                  style: TextStyle(fontSize: 12))),
-            ]),
+            child: Row(
+              children: [
+                const Icon(Icons.gamepad, size: 18),
+                const SizedBox(width: 8),
+                const Expanded(
+                  child: Text(
+                    'Gamepad input uses the platform gamepads plugin. Connect a '
+                    'Bluetooth / USB Xbox-style controller and the d-pad, A/B/X/Y, '
+                    'L/R + Start are mapped to Saturn buttons automatically. '
+                    'Per-peripheral semantics (analog stick on 3D pad / wheel on '
+                    'Arcade Racer / aim on Virtua Gun) are picked from the peripheral '
+                    'type above.',
+                    style: TextStyle(fontSize: 12),
+                  ),
+                ),
+              ],
+            ),
           ),
         ),
-      ]),
+      ],
     );
   }
 }

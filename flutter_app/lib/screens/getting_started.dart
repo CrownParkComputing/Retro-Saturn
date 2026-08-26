@@ -219,6 +219,43 @@ class GettingStartedSteps {
         ],
       );
 
+  /// "I finished setup -- now what?"
+  static GuideStep firstGame() => GuideStep(
+        title: 'Playing your first game',
+        icon: Icons.sports_esports_outlined,
+        body: <Widget>[
+          _p('From the Games shelf, tap a title. That is the whole thing -- '
+              'the disc goes in, the Saturn boots it.'),
+          _point(
+            Icons.menu,
+            'The corner button',
+            'While playing, the button in the top-left corner opens the '
+                'pause menu: resume, save your place and leave, or close. '
+                'On a controller, the Select button does the same.',
+          ),
+          _point(
+            Icons.videogame_asset_outlined,
+            'The tool rail',
+            'Down the right edge while playing: screen shape (4:3 or '
+                'widescreen), the on-screen pad, moving the controls, and '
+                'the port setup for pads, wheels, guns and mice.',
+          ),
+          _point(
+            Icons.save_outlined,
+            'Your place is kept',
+            'Save and exit keeps your place; even Close refreshes an '
+                'automatic slot. The States page lists everything, with '
+                'pictures.',
+          ),
+          _point(
+            Icons.tune,
+            'If a game misbehaves',
+            'The Core page has the emulator options, applied live. Input '
+                'chooses what is plugged into each Saturn port.',
+          ),
+        ],
+      );
+
   /// The platform's own answer to "where do I put my files?".
   static GuideStep whereFilesGo() {
     if (Platform.isIOS) {

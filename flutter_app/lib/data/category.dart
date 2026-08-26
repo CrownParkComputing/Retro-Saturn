@@ -26,7 +26,7 @@ enum WorkbenchCategory {
   games('🎮', 'Games', 0),
   states('💾', 'States', 0),
   paths('📂', 'Paths', 1),
-  audio('🔊', 'Audio', 1),
+  audio('🔊', 'A/V', 1),
   input('🕹️', 'Input', 1),
   core('⚙️', 'Core', 1),
   history('📜', 'Memories', 2),

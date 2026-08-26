@@ -20,6 +20,8 @@
 // "Start over" affordance that lets a reviewer re-trigger the setup
 // wizard without uninstalling the app.
 
+import 'dart:io';
+import 'package:retro_saturn/services/app_prefs.dart';
 import 'package:flutter/material.dart';
 
 class ComplianceScreen extends StatelessWidget {
@@ -70,10 +72,12 @@ class ComplianceScreen extends StatelessWidget {
           'BIOS file" -- it does not need to be named saturn_bios.bin. '
           'A self-ripped BIOS supplied by you is exactly the same file '
           'as one you may already have for Mednafen / RetroArch / Ymir / '
-          'Yabause; copy it across.\n\n'
-          'On this device right now: no BIOS is installed (the app boots '
-          'to an error screen until one is supplied).',
+          'Yabause; copy it across.',
         ),
+        // Computed, not claimed: this page is the one a store reviewer
+        // reads, and a hard-coded "no BIOS is installed" became a lie the
+        // moment the user picked one.
+        const _BiosStateLine(),
 
         const _Head('2. No games are shipped'),
         const _Body(
@@ -105,9 +109,7 @@ class ComplianceScreen extends StatelessWidget {
         const _Body(
           'No accounts, no sign-in, no analytics, no tracking, no data '
           'collected and none transmitted. The app makes no network '
-          'request of its own. The one feature that can is cover-artwork '
-          'matching, which does nothing until you enter a URL of your own '
-          'in Settings.',
+          'request of its own.',
         ),
 
         const _Head('5. Reference'),
@@ -167,5 +169,42 @@ class _Body extends StatelessWidget {
   Widget build(BuildContext context) {
     return Text(text,
         style: const TextStyle(color: Colors.white70, fontSize: 12, height: 1.4));
+  }
+}
+
+/// "On this device right now" as a fact read from the device, not a claim
+/// baked into the build.
+class _BiosStateLine extends StatefulWidget {
+  const _BiosStateLine();
+
+  @override
+  State<_BiosStateLine> createState() => _BiosStateLineState();
+}
+
+class _BiosStateLineState extends State<_BiosStateLine> {
+  String? _biosPath;
+  bool _loaded = false;
+
+  @override
+  void initState() {
+    super.initState();
+    AppPrefs.getBiosPath().then((path) {
+      if (!mounted) return;
+      setState(() {
+        _biosPath = (path != null && File(path).existsSync()) ? path : null;
+        _loaded = true;
+      });
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (!_loaded) return const SizedBox.shrink();
+    final String text = _biosPath == null
+        ? 'On this device right now: no BIOS is installed (the app boots '
+            'to an error screen until one is supplied).'
+        : 'On this device right now: a user-supplied BIOS is installed '
+            '(${_biosPath!.split('/').last}).';
+    return _Body(text);
   }
 }
