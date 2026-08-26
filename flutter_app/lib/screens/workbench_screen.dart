@@ -23,12 +23,10 @@ import 'package:retro_saturn/data/category.dart';
 import 'package:retro_saturn/data/media_entry.dart';
 import 'package:retro_saturn/ffi/ymir_core.dart';
 import 'package:retro_saturn/screens/about_screen.dart';
-import 'package:retro_saturn/screens/audio_settings_screen.dart';
 import 'package:retro_saturn/screens/compliance_screen.dart';
 import 'package:retro_saturn/screens/emulator_session_screen.dart';
 import 'package:retro_saturn/screens/history_screen.dart';
 import 'package:retro_saturn/screens/core_options_screen.dart';
-import 'package:retro_saturn/screens/input_settings_screen.dart';
 import 'package:retro_saturn/screens/save_states_screen.dart';
 import 'package:retro_saturn/services/save_state_service.dart';
 import 'package:retro_saturn/screens/library_grid.dart';
@@ -250,11 +248,7 @@ class _WorkbenchScreenState extends State<WorkbenchScreen> {
           onResume: _onResumeSlot,
         );
       case WorkbenchCategory.paths:
-        return const PathsSettingsScreen();
-      case WorkbenchCategory.audio:
-        return AudioSettingsScreen(core: widget.core);
-      case WorkbenchCategory.input:
-        return InputSettingsScreen(core: widget.core);
+        return PathsSettingsScreen(core: widget.core);
       case WorkbenchCategory.core:
         return CoreOptionsScreen(core: widget.core);
       case WorkbenchCategory.history:

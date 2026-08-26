@@ -8,11 +8,15 @@ import 'package:retro_saturn/services/storage_permission.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:retro_saturn/screens/setup_wizard_screen.dart';
+import 'package:retro_saturn/ffi/ymir_core.dart';
 import 'package:retro_saturn/services/app_prefs.dart';
 import 'package:retro_saturn/services/setup_scan_service.dart';
 
 class PathsSettingsScreen extends StatefulWidget {
-  const PathsSettingsScreen({super.key});
+  /// For the audio mute switch, folded in here from the old A/V page.
+  final YmirCore core;
+
+  const PathsSettingsScreen({super.key, required this.core});
 
   @override
   State<PathsSettingsScreen> createState() => _PathsSettingsScreenState();
@@ -23,9 +27,21 @@ class _PathsSettingsScreenState extends State<PathsSettingsScreen> {
   String _gamesFolder = '';
   ScanResult? _scan;
 
+  bool _fill = AppPrefs.screenFill;
+  bool _padDefault = false;
+  bool _muted = false;
+  bool _confirmDelete = true;
+
   @override
   void initState() {
     super.initState();
+    _muted = widget.core.audioMuted;
+    AppPrefs.getShowPadDefault().then((v) {
+      if (mounted) setState(() => _padDefault = v);
+    });
+    AppPrefs.getConfirmDelete().then((v) {
+      if (mounted) setState(() => _confirmDelete = v);
+    });
     _load();
   }
 
@@ -72,69 +88,76 @@ class _PathsSettingsScreenState extends State<PathsSettingsScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return ListView(
+    // Everything on ONE page, no scrolling: the folders and setup on the
+    // left, the display/audio/library switches on the right. The old A/V
+    // tab is folded in here; Input went entirely -- the ports are wired
+    // from the in-game rail now.
+    return Padding(
       padding: const EdgeInsets.all(16),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Expanded(child: _foldersColumn()),
+          const SizedBox(width: 24),
+          Expanded(child: _switchesColumn()),
+        ],
+      ),
+    );
+  }
+
+  Widget _foldersColumn() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         _section('Saturn BIOS'),
         ListTile(
-          leading: const Icon(Icons.memory),
+          dense: true,
+          contentPadding: EdgeInsets.zero,
+          leading: const Icon(Icons.memory, size: 20),
           title: Text(
             _biosPath.isEmpty ? '(unset)' : _biosPath.split('/').last,
-            style: const TextStyle(fontFamily: 'monospace'),
+            style: const TextStyle(fontFamily: 'monospace', fontSize: 13),
           ),
           subtitle: _biosPath.isEmpty
               ? null
-              : Text(
-                  _biosPath,
-                  style: const TextStyle(fontSize: 10, color: Colors.white54),
-                ),
-          trailing: const Icon(Icons.edit),
+              : Text(_biosPath,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style:
+                      const TextStyle(fontSize: 10, color: Colors.white54)),
+          trailing: const Icon(Icons.edit, size: 18),
           onTap: _pickBios,
         ),
-        const SizedBox(height: 16),
+        const SizedBox(height: 8),
         _section('Games folder'),
         ListTile(
-          leading: const Icon(Icons.folder),
+          dense: true,
+          contentPadding: EdgeInsets.zero,
+          leading: const Icon(Icons.folder, size: 20),
           title: Text(
             _gamesFolder.isEmpty ? '(unset)' : _gamesFolder.split('/').last,
-            style: const TextStyle(fontFamily: 'monospace'),
+            style: const TextStyle(fontFamily: 'monospace', fontSize: 13),
           ),
           subtitle: _gamesFolder.isEmpty
               ? null
-              : Text(
-                  _gamesFolder,
-                  style: const TextStyle(fontSize: 10, color: Colors.white54),
-                ),
-          trailing: const Icon(Icons.edit),
+              : Text(_gamesFolder,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style:
+                      const TextStyle(fontSize: 10, color: Colors.white54)),
+          trailing: const Icon(Icons.edit, size: 18),
           onTap: _pickGames,
         ),
-        const SizedBox(height: 8),
-        Row(
-          children: [
-            OutlinedButton.icon(
-              onPressed: _gamesFolder.isEmpty ? null : _rescan,
-              icon: const Icon(Icons.refresh),
-              label: const Text('Re-scan folder'),
-            ),
-          ],
-        ),
-        const SizedBox(height: 24),
-        _section('Library'),
-      _ConfirmDeleteSwitch(),
-      const SizedBox(height: 16),
-      _section('Setup'),
-        Card(
-          margin: EdgeInsets.zero,
-          child: ListTile(
-            leading: const Icon(Icons.replay),
-            title: const Text('Re-run setup wizard'),
-            subtitle: const Text(
-              'Re-pick the BIOS, games folder and core setup from scratch. '
-              'Useful after switching devices or restoring an Android backup.',
-              style: TextStyle(fontSize: 11, color: Colors.white54),
-            ),
-            trailing: const Icon(Icons.chevron_right),
-            onTap: () => Navigator.of(context).push(
+        const SizedBox(height: 12),
+        Row(children: [
+          OutlinedButton.icon(
+            onPressed: _gamesFolder.isEmpty ? null : _rescan,
+            icon: const Icon(Icons.refresh, size: 16),
+            label: const Text('Re-scan'),
+          ),
+          const SizedBox(width: 8),
+          OutlinedButton.icon(
+            onPressed: () => Navigator.of(context).push(
               MaterialPageRoute(
                 builder: (_) => SetupWizardScreen(
                   onComplete: () {
@@ -144,10 +167,74 @@ class _PathsSettingsScreenState extends State<PathsSettingsScreen> {
                 ),
               ),
             ),
+            icon: const Icon(Icons.replay, size: 16),
+            label: const Text('Re-run setup wizard'),
           ),
-        ),
-        const SizedBox(height: 24),
+        ]),
+        const SizedBox(height: 12),
         if (_scan != null) _scanSummary(),
+      ],
+    );
+  }
+
+  Widget _switchesColumn() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        _section('Screen'),
+        SwitchListTile(
+          dense: true,
+          contentPadding: EdgeInsets.zero,
+          title: const Text('Stretch to fill (16:9)'),
+          subtitle: const Text('The in-game Fill tool changes this too.',
+              style: TextStyle(fontSize: 11, color: Colors.white54)),
+          value: _fill,
+          onChanged: (v) {
+            AppPrefs.setScreenFill(v);
+            setState(() => _fill = v);
+          },
+        ),
+        SwitchListTile(
+          dense: true,
+          contentPadding: EdgeInsets.zero,
+          title: const Text('Start sessions with the on-screen pad'),
+          subtitle: const Text('The in-game Pad tool toggles it mid-game.',
+              style: TextStyle(fontSize: 11, color: Colors.white54)),
+          value: _padDefault,
+          onChanged: (v) {
+            AppPrefs.setShowPadDefault(v);
+            setState(() => _padDefault = v);
+          },
+        ),
+        const SizedBox(height: 8),
+        _section('Audio'),
+        SwitchListTile(
+          dense: true,
+          contentPadding: EdgeInsets.zero,
+          title: const Text('Mute'),
+          subtitle: const Text(
+              'The core keeps running; un-muting snaps back to now.',
+              style: TextStyle(fontSize: 11, color: Colors.white54)),
+          value: _muted,
+          onChanged: (v) {
+            widget.core.setAudioMuted(v);
+            setState(() => _muted = v);
+          },
+        ),
+        const SizedBox(height: 8),
+        _section('Library'),
+        SwitchListTile(
+          dense: true,
+          contentPadding: EdgeInsets.zero,
+          title: const Text('Confirm before deleting files'),
+          subtitle: const Text("Guards the library's long-press Delete.",
+              style: TextStyle(fontSize: 11, color: Colors.white54)),
+          value: _confirmDelete,
+          onChanged: (v) {
+            AppPrefs.setConfirmDelete(v);
+            setState(() => _confirmDelete = v);
+          },
+        ),
       ],
     );
   }
@@ -197,42 +284,6 @@ class _PathsSettingsScreenState extends State<PathsSettingsScreen> {
           ],
         ),
       ),
-    );
-  }
-}
-
-
-/// "Confirm before deleting files" -- guards the library's long-press
-/// Delete. On by default.
-class _ConfirmDeleteSwitch extends StatefulWidget {
-  @override
-  State<_ConfirmDeleteSwitch> createState() => _ConfirmDeleteSwitchState();
-}
-
-class _ConfirmDeleteSwitchState extends State<_ConfirmDeleteSwitch> {
-  bool _confirm = true;
-
-  @override
-  void initState() {
-    super.initState();
-    AppPrefs.getConfirmDelete().then((v) {
-      if (mounted) setState(() => _confirm = v);
-    });
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return SwitchListTile(
-      title: const Text('Confirm before deleting files'),
-      subtitle: const Text(
-          "Guards the library's long-press Delete. Off means one tap "
-          'deletes the file from disk.',
-          style: TextStyle(fontSize: 11, color: Colors.white54)),
-      value: _confirm,
-      onChanged: (v) {
-        AppPrefs.setConfirmDelete(v);
-        setState(() => _confirm = v);
-      },
     );
   }
 }
