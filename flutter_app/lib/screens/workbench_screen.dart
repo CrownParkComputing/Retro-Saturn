@@ -13,9 +13,12 @@
 // while a session is running -- the rail stays a launcher, the
 // bottom strip becomes the in-game status strip.
 
+import 'dart:io';
 import 'dart:async';
 
+import 'package:path/path.dart' as p;
 import 'package:flutter/material.dart';
+import 'package:retro_saturn/services/app_log.dart';
 import 'package:retro_saturn/data/category.dart';
 import 'package:retro_saturn/data/media_entry.dart';
 import 'package:retro_saturn/ffi/ymir_core.dart';
@@ -92,13 +95,49 @@ class _WorkbenchScreenState extends State<WorkbenchScreen> {
   }
 
   Future<void> _loadPaths() async {
-    final b = await AppPrefs.getBiosPath() ?? '';
+    var b = await AppPrefs.getBiosPath() ?? '';
     final g = await AppPrefs.getGamesFolder() ?? '';
+    // The BIOS pref can go stale -- the card gets reorganised, or moves to
+    // another device -- and a machine booted with no BIOS is just a black
+    // screen with nothing to say why. If the stored file is gone, look
+    // where the family convention keeps it: a BIOS/ folder next to the
+    // games folder. Found one, keep it; the repair is visible in Paths.
+    if ((b.isEmpty || !File(b).existsSync()) && g.isNotEmpty) {
+      final repaired = _findBiosNear(g);
+      if (repaired != null) {
+        b = repaired;
+        await AppPrefs.setBiosPath(repaired);
+        AppLog.log('bios path repaired: $repaired');
+      }
+    }
     if (!mounted) return;
     setState(() {
       _biosPath = b;
       _gamesFolder = g;
     });
+  }
+
+  /// A plausible Saturn BIOS in the BIOS/ folder beside [gamesFolder], or
+  /// beside its parent. 512 KiB is the Saturn BIOS size; the name is not
+  /// trusted because dumps are named every way imaginable.
+  static String? _findBiosNear(String gamesFolder) {
+    for (final dir in <String>[
+      p.join(p.dirname(gamesFolder), 'BIOS'),
+      p.join(gamesFolder, 'BIOS'),
+    ]) {
+      final d = Directory(dir);
+      if (!d.existsSync()) continue;
+      try {
+        for (final f in d.listSync(followLinks: false)) {
+          if (f is! File) continue;
+          if (!f.path.toLowerCase().endsWith('.bin')) continue;
+          if (f.lengthSync() == 524288) return f.path;
+        }
+      } on FileSystemException {
+        continue;
+      }
+    }
+    return null;
   }
 
   /// Tap on a card in the States view. The disc has to be mounted before the

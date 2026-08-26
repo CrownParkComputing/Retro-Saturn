@@ -74,6 +74,10 @@ class _EmulatorScreenState extends State<EmulatorScreen> {
   /// the centre of the picture.
   final ValueNotifier<Size> _frameSize = ValueNotifier<Size>(Size.zero);
 
+  /// Set when the BIOS or disc could not be loaded: the machine would just
+  /// show black, so this is drawn over it saying why.
+  String? _mediaProblem;
+
   /// Peripheral changes come from the settings drawer, not from this screen,
   /// so the overlay choice has to be re-read rather than captured once.
   Timer? _peripheralWatch;
@@ -116,12 +120,28 @@ class _EmulatorScreenState extends State<EmulatorScreen> {
     final biosPath = widget.biosPath;
     final entry = widget.entry;
 
-    if (biosPath != null && File(biosPath).existsSync()) {
+    if (biosPath != null &&
+        biosPath.isNotEmpty &&
+        File(biosPath).existsSync()) {
       AppLog.log('loadBios: $biosPath');
       final rc = widget.core.loadBios(biosPath);
       AppLog.log('loadBios rc=$rc');
+      if (rc != 0 && mounted) {
+        setState(() => _mediaProblem =
+            'The BIOS could not be loaded (error $rc).');
+      }
     } else {
-      AppLog.log('loadBios: skipped (${biosPath == null ? "no path" : "missing file"})');
+      AppLog.log('loadBios: skipped (${(biosPath == null || biosPath.isEmpty) ? "no path" : "missing file"})');
+      // A machine with no BIOS boots to NOTHING -- a silent black screen
+      // that reads as "the app is broken". Say what is actually wrong and
+      // where to fix it.
+      if (mounted) {
+        setState(() => _mediaProblem = (biosPath == null || biosPath.isEmpty)
+            ? 'No Saturn BIOS is set. Choose one in Paths, or re-run '
+                'setup from Paths.'
+            : 'The Saturn BIOS is missing:\n$biosPath\n\nPoint Paths at '
+                'the file\'s new location, or re-run setup.');
+      }
     }
 
     if (entry != null && File(entry.path).existsSync()) {
@@ -184,6 +204,31 @@ class _EmulatorScreenState extends State<EmulatorScreen> {
       // this widget's counter measures its own redraws, which is a different
       // number under the same name drawn over the top-right of the game.
       FramebufferView(core: widget.core, frameSize: _frameSize),
+      if (_mediaProblem != null)
+        Center(
+          child: Container(
+            margin: const EdgeInsets.all(32),
+            padding: const EdgeInsets.all(20),
+            decoration: BoxDecoration(
+              color: const Color(0xE0181C20),
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: Colors.orangeAccent),
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Icon(Icons.error_outline,
+                    color: Colors.orangeAccent, size: 32),
+                const SizedBox(height: 10),
+                Text(
+                  _mediaProblem!,
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(color: Colors.white, height: 1.4),
+                ),
+              ],
+            ),
+          ),
+        ),
       if (showGun)
         VirtuaGunOverlay(core: widget.core, port: 1, frameSize: _frameSize),
       if (showMouse) ShuttleMouseOverlay(core: widget.core, port: 1),
