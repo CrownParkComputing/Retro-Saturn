@@ -6,11 +6,11 @@ import 'package:path/path.dart' as p;
 import 'package:flutter/services.dart';
 
 import '../data/media_entry.dart';
+import '../ffi/ymir_bindings.dart';
 import '../ffi/ymir_core.dart';
 import '../services/app_prefs.dart';
 import '../services/save_state_service.dart';
 import '../theme/saturn_theme.dart';
-import '../widgets/peripheral_selector.dart';
 import 'emulator_screen.dart';
 
 /// How a session ended, so the workbench knows what to show next.
@@ -143,6 +143,62 @@ class _EmulatorSessionScreenState extends State<EmulatorSessionScreen> {
     }
   }
 
+  /// Tapping a port socket: choose what is plugged into it. The chooser
+  /// lists every Saturn peripheral with a one-line description, current
+  /// one ticked.
+  Future<void> _choosePeripheral(int port) async {
+    final YmirPeripheralType current = widget.core.getPeripheralType(port);
+    final YmirPeripheralType? chosen =
+        await showModalBottomSheet<YmirPeripheralType>(
+      context: context,
+      backgroundColor: const Color(0xFF13161F),
+      builder: (BuildContext context) => SafeArea(
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              ListTile(title: Text('Port $port peripheral')),
+              const Divider(height: 1),
+              for (final t in YmirPeripheralType.values)
+                ListTile(
+                  leading: Icon(_peripheralIcon(t),
+                      color:
+                          t == current ? const Color(0xFF3D8BFF) : null),
+                  title: Text(_peripheralName(t) == 'nothing'
+                      ? 'None'
+                      : _peripheralName(t)),
+                  subtitle: Text(
+                    switch (t) {
+                      YmirPeripheralType.none => 'No peripheral connected',
+                      YmirPeripheralType.controlPad =>
+                        'Standard 12-button Saturn pad',
+                      YmirPeripheralType.analogPad =>
+                        'Analog stick + L/R triggers',
+                      YmirPeripheralType.arcadeRacer =>
+                        'Wheel + face buttons',
+                      YmirPeripheralType.missionStick =>
+                        'Two analog sticks + throttle',
+                      YmirPeripheralType.virtuaGun =>
+                        'Light gun (touch overlay)',
+                      YmirPeripheralType.shuttleMouse => '2-button mouse',
+                    },
+                    style: const TextStyle(
+                        fontSize: 11, color: Colors.white54),
+                  ),
+                  trailing:
+                      t == current ? const Icon(Icons.check, size: 18) : null,
+                  onTap: () => Navigator.pop(context, t),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+    if (chosen == null || chosen == current || !mounted) return;
+    widget.core.setPeripheralType(port, chosen);
+    setState(() {}); // the socket icon reflects the new wiring
+  }
+
   /// The rail's Disk tool: pick another disc of this game and put it in
   /// the drive -- the machine keeps running, exactly like swapping a CD.
   Future<void> _swapDisc() async {
@@ -262,7 +318,6 @@ class _EmulatorSessionScreenState extends State<EmulatorSessionScreen> {
       child: Scaffold(
         key: _scaffoldKey,
         backgroundColor: Colors.black,
-        endDrawer: _settingsDrawer(context),
         body: Stack(
           fit: StackFit.expand,
           children: <Widget>[
@@ -427,12 +482,30 @@ class _EmulatorSessionScreenState extends State<EmulatorSessionScreen> {
                             onPressed: () => setState(
                                 () => _editingLayout = !_editingLayout),
                           ),
+                        // The two sockets, each showing what is in it --
+                        // the Amiga rail's model. Tapping a socket opens
+                        // the chooser for THAT port.
                         _tool(
-                          icon: Icons.settings,
-                          label: 'Setup',
-                          tip: 'Peripherals and core options',
-                          onPressed: () =>
-                              _scaffoldKey.currentState?.openEndDrawer(),
+                          icon: _peripheralIcon(
+                              widget.core.getPeripheralType(1)),
+                          label: 'Port 1',
+                          tip:
+                              'Port 1: ${_peripheralName(widget.core.getPeripheralType(1))}'
+                              ' — tap to change',
+                          active: widget.core.getPeripheralType(1) !=
+                              YmirPeripheralType.none,
+                          onPressed: () => unawaited(_choosePeripheral(1)),
+                        ),
+                        _tool(
+                          icon: _peripheralIcon(
+                              widget.core.getPeripheralType(2)),
+                          label: 'Port 2',
+                          tip:
+                              'Port 2: ${_peripheralName(widget.core.getPeripheralType(2))}'
+                              ' — tap to change',
+                          active: widget.core.getPeripheralType(2) !=
+                              YmirPeripheralType.none,
+                          onPressed: () => unawaited(_choosePeripheral(2)),
                         ),
                       ],
                     ),
@@ -498,22 +571,28 @@ class _EmulatorSessionScreenState extends State<EmulatorSessionScreen> {
     );
   }
 
-  /// The in-game settings, as this screen's own drawer: the session owns its
-  /// Scaffold now, so the drawer no longer has to live on the workbench.
-  Widget _settingsDrawer(BuildContext context) {
-    return Drawer(
-      child: SafeArea(
-        child: ListView(padding: const EdgeInsets.all(16), children: [
-          Text('Settings', style: Theme.of(context).textTheme.titleLarge),
-          const SizedBox(height: 16),
-          PeripheralSelector(core: widget.core, port: 1),
-          const SizedBox(height: 12),
-          PeripheralSelector(core: widget.core, port: 2),
-        ]),
-      ),
-    );
-  }
 }
+
+/// What each Saturn peripheral looks like on the rail's port sockets.
+IconData _peripheralIcon(YmirPeripheralType t) => switch (t) {
+      YmirPeripheralType.none => Icons.power_off,
+      YmirPeripheralType.controlPad => Icons.videogame_asset,
+      YmirPeripheralType.analogPad => Icons.sports_esports,
+      YmirPeripheralType.arcadeRacer => Icons.sports_motorsports,
+      YmirPeripheralType.missionStick => Icons.flight,
+      YmirPeripheralType.virtuaGun => Icons.gps_fixed,
+      YmirPeripheralType.shuttleMouse => Icons.mouse,
+    };
+
+String _peripheralName(YmirPeripheralType t) => switch (t) {
+      YmirPeripheralType.none => 'nothing',
+      YmirPeripheralType.controlPad => 'Control Pad',
+      YmirPeripheralType.analogPad => '3D Control Pad',
+      YmirPeripheralType.arcadeRacer => 'Arcade Racer',
+      YmirPeripheralType.missionStick => 'Mission Stick',
+      YmirPeripheralType.virtuaGun => 'Virtua Gun',
+      YmirPeripheralType.shuttleMouse => 'Shuttle Mouse',
+    };
 
 /// The way back into the game, over the dimmed picture.
 class _ResumeButton extends StatelessWidget {
