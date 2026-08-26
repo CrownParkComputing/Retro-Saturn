@@ -348,6 +348,35 @@ class _EmulatorSessionScreenState extends State<EmulatorSessionScreen> {
                       children: <Widget>[
                         _ResumeButton(onPressed: _toggleMenu),
                         const SizedBox(height: 14),
+                        // Occasional actions live HERE, not on the rail:
+                        // the rail keeps only the tools touched mid-play.
+                        _MenuChoice(
+                          icon: _fillScreen
+                              ? Icons.fit_screen
+                              : Icons.aspect_ratio,
+                          label: _fillScreen
+                              ? 'Screen: 16:9 stretch'
+                              : 'Screen: 4:3 shape',
+                          detail: 'Tap to switch',
+                          onPressed: () {
+                            setState(() => _fillScreen = !_fillScreen);
+                            AppPrefs.setScreenFill(_fillScreen);
+                          },
+                        ),
+                        if (_siblingDiscs.length > 1) ...[
+                          const SizedBox(height: 8),
+                          _MenuChoice(
+                            icon: Icons.album,
+                            label: 'Swap disc',
+                            detail:
+                                'Put another disc of this game in the drive',
+                            onPressed: () {
+                              _toggleMenu();
+                              unawaited(_swapDisc());
+                            },
+                          ),
+                        ],
+                        const SizedBox(height: 8),
                         _MenuChoice(
                           icon: Icons.bookmark_add_outlined,
                           label: 'Save and exit',
@@ -430,31 +459,6 @@ class _EmulatorSessionScreenState extends State<EmulatorSessionScreen> {
                     child: Column(
                       mainAxisSize: MainAxisSize.min,
                       children: <Widget>[
-                        _tool(
-                          // The Saturn is a 4:3 machine and a handheld is
-                          // not; which annoyance you prefer -- bars or
-                          // stretch -- is a matter of taste, so it is a
-                          // toggle. Same tool as the Amiga and ST rails.
-                          icon: _fillScreen
-                              ? Icons.fit_screen
-                              : Icons.aspect_ratio,
-                          label: _fillScreen ? 'Shape' : 'Fill',
-                          tip: _fillScreen
-                              ? "Keep the Saturn's shape"
-                              : 'Stretch to fill the screen',
-                          active: _fillScreen,
-                          onPressed: () {
-                            setState(() => _fillScreen = !_fillScreen);
-                            AppPrefs.setScreenFill(_fillScreen);
-                          },
-                        ),
-                        if (_siblingDiscs.length > 1)
-                          _tool(
-                            icon: Icons.album,
-                            label: 'Disk',
-                            tip: 'Swap to another disc of this game',
-                            onPressed: () => unawaited(_swapDisc()),
-                          ),
                         _tool(
                           icon: Icons.videogame_asset,
                           label: 'Pad',
