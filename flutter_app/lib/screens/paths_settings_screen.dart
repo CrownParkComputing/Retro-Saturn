@@ -4,6 +4,7 @@
 // setup" entry used to live in the sidebar footer; it is now here so
 // the rail stays a launcher.
 
+import 'package:retro_saturn/services/storage_permission.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:retro_saturn/screens/setup_wizard_screen.dart';
@@ -50,6 +51,9 @@ class _PathsSettingsScreenState extends State<PathsSettingsScreen> {
   }
 
   Future<void> _pickGames() async {
+    // The system picker will happily hand back an SD-card path the app
+    // then cannot read; ask for the access first.
+    if (!await StoragePermission.ensure()) return;
     final p = await FilePicker.platform.getDirectoryPath();
     if (p != null) {
       await AppPrefs.setGamesFolder(p);
