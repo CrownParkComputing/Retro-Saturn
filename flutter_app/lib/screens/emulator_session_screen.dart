@@ -177,6 +177,7 @@ class _EmulatorSessionScreenState extends State<EmulatorSessionScreen> {
                 resumeStatePath: widget.resumeStatePath,
                 showPadOverlay: _padVisible,
                 fillScreen: _fillScreen,
+                onMenuButton: _toggleMenu,
                 editingLayout: _editingLayout,
               ),
             ),

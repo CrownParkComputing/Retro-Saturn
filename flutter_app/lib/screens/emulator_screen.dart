@@ -49,6 +49,10 @@ class EmulatorScreen extends StatefulWidget {
   /// Stretch the picture to fill the screen, or keep the Saturn's shape.
   final bool fillScreen;
 
+  /// Fired when the pad's back/select button is pressed -- the session
+  /// screen opens its pause menu with it.
+  final VoidCallback? onMenuButton;
+
   /// Layout mode for the pad overlay: clusters drag instead of press.
   final bool editingLayout;
 
@@ -61,6 +65,7 @@ class EmulatorScreen extends StatefulWidget {
     this.resumeStatePath,
     this.showPadOverlay = false,
     this.fillScreen = false,
+    this.onMenuButton,
     this.editingLayout = false,
   });
 
@@ -91,7 +96,8 @@ class _EmulatorScreenState extends State<EmulatorScreen> {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) => _loadMedia());
-    _gamepad = GamepadService(widget.core, port: 1);
+    _gamepad = GamepadService(widget.core, port: 1)
+      ..onMenu = widget.onMenuButton;
     _peripheral = widget.core.getPeripheralType(1);
     _peripheralWatch = Timer.periodic(const Duration(milliseconds: 500), (_) {
       final now = widget.core.getPeripheralType(1);

@@ -39,6 +39,12 @@ class GamepadService extends ChangeNotifier {
   double _stickX = 0.0;
   double _stickY = 0.0;
 
+  /// Fired when the pad's back/select button goes down. The Saturn pad has
+  /// no Select, so the button is free -- the session screen uses it to open
+  /// the pause menu, because reaching for the touchscreen mid-game on a
+  /// handheld means letting go of the controls.
+  VoidCallback? onMenu;
+
   /// Latest trigger / start for Virtua Gun.
   bool _triggerPressed = false;
   bool _startPressed = false;
@@ -70,6 +76,7 @@ class GamepadService extends ChangeNotifier {
         case GamepadButton.x:         _setBit(YmirButton.x, down); break;
         case GamepadButton.y:         _setBit(YmirButton.y, down); break;
         case GamepadButton.start:     _setBit(YmirButton.start, down); break;
+        case GamepadButton.back:      if (down) onMenu?.call(); break;
         case GamepadButton.leftBumper:  _setBit(YmirButton.l, down); break;
         case GamepadButton.rightBumper: _setBit(YmirButton.r, down); break;
         default: break;

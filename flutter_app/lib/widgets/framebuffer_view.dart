@@ -22,10 +22,9 @@ class FramebufferView extends StatefulWidget {
   /// a whole frame of their own.
   final ValueNotifier<Size>? frameSize;
 
-  /// Stretch the picture to fill the view instead of keeping the Saturn's
-  /// shape. A 4:3 machine on a widescreen handheld leaves black bars either
-  /// side; which annoyance you prefer is a matter of taste, so it is a
-  /// toggle rather than a decision made for the user.
+  /// Display aspect: false = 4:3 (as the tube showed it), true = 16:9
+  /// (widescreen stretch). Always one of the two television shapes --
+  /// never a free stretch to the view, which distorted vertically.
   final bool fillScreen;
   /// Draws the PANEL's redraw rate over the picture.
   ///
@@ -134,12 +133,24 @@ class _FramebufferViewState extends State<FramebufferView> {
           if (_image == null)
             const Center(child: CircularProgressIndicator())
           else
-            FittedBox(
-              fit: widget.fillScreen ? BoxFit.fill : BoxFit.contain,
-              child: SizedBox(
-                width: _imageW.toDouble(),
-                height: _imageH.toDouble(),
-                child: CustomPaint(painter: _ImagePainter(_image!)),
+            // Pinned to a real television aspect, never a free stretch.
+            // The Saturn's pixels are not square (320x224 is drawn on a
+            // 4:3 tube), so fitting the raw pixel dimensions was already
+            // slightly wrong -- and BoxFit.fill distorted vertically on
+            // anything that is not exactly the picture's shape. The
+            // toggle is 4:3 (as the tube showed it) or 16:9 (widescreen
+            // stretch), letterboxed as needed.
+            Center(
+              child: AspectRatio(
+                aspectRatio: widget.fillScreen ? 16 / 9 : 4 / 3,
+                child: FittedBox(
+                  fit: BoxFit.fill,
+                  child: SizedBox(
+                    width: _imageW.toDouble(),
+                    height: _imageH.toDouble(),
+                    child: CustomPaint(painter: _ImagePainter(_image!)),
+                  ),
+                ),
               ),
             ),
           if (widget.showFps)
