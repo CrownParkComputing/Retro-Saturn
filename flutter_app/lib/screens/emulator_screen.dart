@@ -46,6 +46,9 @@ class EmulatorScreen extends StatefulWidget {
   /// rendered).
   final bool showPadOverlay;
 
+  /// Stretch the picture to fill the screen, or keep the Saturn's shape.
+  final bool fillScreen;
+
   /// Layout mode for the pad overlay: clusters drag instead of press.
   final bool editingLayout;
 
@@ -57,6 +60,7 @@ class EmulatorScreen extends StatefulWidget {
     this.entry,
     this.resumeStatePath,
     this.showPadOverlay = false,
+    this.fillScreen = false,
     this.editingLayout = false,
   });
 
@@ -203,7 +207,10 @@ class _EmulatorScreenState extends State<EmulatorScreen> {
       // No FPS overlay: the status row already reports the core's rate, and
       // this widget's counter measures its own redraws, which is a different
       // number under the same name drawn over the top-right of the game.
-      FramebufferView(core: widget.core, frameSize: _frameSize),
+      FramebufferView(
+          core: widget.core,
+          frameSize: _frameSize,
+          fillScreen: widget.fillScreen),
       if (_mediaProblem != null)
         Center(
           child: Container(

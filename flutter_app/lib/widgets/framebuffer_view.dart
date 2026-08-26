@@ -21,6 +21,12 @@ class FramebufferView extends StatefulWidget {
   /// the Saturn from 320x224 to 704x512 without re-reading -- and copying --
   /// a whole frame of their own.
   final ValueNotifier<Size>? frameSize;
+
+  /// Stretch the picture to fill the view instead of keeping the Saturn's
+  /// shape. A 4:3 machine on a widescreen handheld leaves black bars either
+  /// side; which annoyance you prefer is a matter of taste, so it is a
+  /// toggle rather than a decision made for the user.
+  final bool fillScreen;
   /// Draws the PANEL's redraw rate over the picture.
   ///
   /// Note this is not the core's frame rate: it counts how often this widget
@@ -40,6 +46,7 @@ class FramebufferView extends StatefulWidget {
     // read 30 by construction, which is not a measurement, it is the cap.
     this.pollInterval = const Duration(milliseconds: 16),
     this.showFps = false,
+      this.fillScreen = false,
   });
 
   @override
@@ -128,7 +135,7 @@ class _FramebufferViewState extends State<FramebufferView> {
             const Center(child: CircularProgressIndicator())
           else
             FittedBox(
-              fit: BoxFit.contain,
+              fit: widget.fillScreen ? BoxFit.fill : BoxFit.contain,
               child: SizedBox(
                 width: _imageW.toDouble(),
                 height: _imageH.toDouble(),

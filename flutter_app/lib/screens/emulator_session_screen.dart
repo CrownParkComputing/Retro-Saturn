@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 
 import '../data/media_entry.dart';
 import '../ffi/ymir_core.dart';
+import '../services/app_prefs.dart';
 import '../services/save_state_service.dart';
 import '../theme/saturn_theme.dart';
 import '../widgets/peripheral_selector.dart';
@@ -64,6 +65,9 @@ class _EmulatorSessionScreenState extends State<EmulatorSessionScreen> {
   final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
 
   bool _padVisible = false;
+
+  /// Stretch to fill, persisted like the Amiga and ST front ends.
+  bool _fillScreen = AppPrefs.screenFill;
 
   /// Layout mode: the pad's clusters drag instead of press, and moves are
   /// remembered. Session-only state, like the rest of the family.
@@ -172,6 +176,7 @@ class _EmulatorSessionScreenState extends State<EmulatorSessionScreen> {
                 entry: widget.entry,
                 resumeStatePath: widget.resumeStatePath,
                 showPadOverlay: _padVisible,
+                fillScreen: _fillScreen,
                 editingLayout: _editingLayout,
               ),
             ),
@@ -269,6 +274,24 @@ class _EmulatorSessionScreenState extends State<EmulatorSessionScreen> {
                     child: Column(
                       mainAxisSize: MainAxisSize.min,
                       children: <Widget>[
+                        _tool(
+                          // The Saturn is a 4:3 machine and a handheld is
+                          // not; which annoyance you prefer -- bars or
+                          // stretch -- is a matter of taste, so it is a
+                          // toggle. Same tool as the Amiga and ST rails.
+                          icon: _fillScreen
+                              ? Icons.fit_screen
+                              : Icons.aspect_ratio,
+                          label: _fillScreen ? 'Shape' : 'Fill',
+                          tip: _fillScreen
+                              ? "Keep the Saturn's shape"
+                              : 'Stretch to fill the screen',
+                          active: _fillScreen,
+                          onPressed: () {
+                            setState(() => _fillScreen = !_fillScreen);
+                            AppPrefs.setScreenFill(_fillScreen);
+                          },
+                        ),
                         _tool(
                           icon: Icons.videogame_asset,
                           label: 'Pad',

@@ -153,6 +153,10 @@ class AppPrefs {
   static Future<void> setLeftHanded(bool v) => _p.setBool(_leftHandedKey, v);
 
   // ---- video ----
+  static const _screenFillKey = 'screen_fill';
+  static bool get screenFill => _p.getBool(_screenFillKey) ?? false;
+  static Future<void> setScreenFill(bool v) => _p.setBool(_screenFillKey, v);
+
   static bool get crtEnabled => _p.getBool(_crtEnabledKey) ?? true;
   static Future<void> setCrtEnabled(bool v) => _p.setBool(_crtEnabledKey, v);
 
