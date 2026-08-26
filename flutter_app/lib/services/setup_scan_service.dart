@@ -155,6 +155,31 @@ class SetupScanService {
       }
     }
 
+    // The canonical layout is one folder -- usually called Saturn -- with
+    // BIOS/ and Games/ subfolders inside. The recursive walk above already
+    // finds both when the user picks that folder; this probe also covers
+    // picking the Games/ subfolder by accident, by looking at its sibling
+    // BIOS/ before reporting "no BIOS".
+    if (bios.isEmpty) {
+      for (final probe in <String>[
+        p.join(p.dirname(folderPath), 'BIOS'),
+        p.join(folderPath, 'BIOS'),
+      ]) {
+        final d = Directory(probe);
+        if (!d.existsSync()) continue;
+        try {
+          for (final f in d.listSync(followLinks: false)) {
+            if (f is! File) continue;
+            if (!f.path.toLowerCase().endsWith('.bin')) continue;
+            if (f.lengthSync() == 524288) bios.add(f.path);
+          }
+        } on FileSystemException {
+          continue;
+        }
+        if (bios.isNotEmpty) break;
+      }
+    }
+
     return ScanResult(folderPath: folderPath,
         biosCandidates: bios, games: _dedup(games));
   }

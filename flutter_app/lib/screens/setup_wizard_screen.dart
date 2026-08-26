@@ -4,8 +4,11 @@
 // platform), then the choice, then the scan with the folder named, then the
 // results — and only then a Finish button.
 
+import 'dart:io';
+
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:path/path.dart' as p;
 import 'package:retro_saturn/services/app_prefs.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:retro_saturn/data/friendly_path.dart';
@@ -152,7 +155,13 @@ class _SetupWizardScreenState extends State<SetupWizardScreen> {
       await AppPrefs.setBiosPath(r.biosCandidates.first);
     }
     if (r != null && r.hasGames) {
-      await AppPrefs.setGamesFolder(r.folderPath);
+      // The canonical layout is one folder -- usually called Saturn --
+      // holding BIOS/ and Games/ subfolders. When the picked folder has a
+      // Games/ subfolder, the library points at THAT, so it never walks
+      // the BIOS, bezels or save folders beside it.
+      final gamesSub = Directory(p.join(r.folderPath, 'Games'));
+      await AppPrefs.setGamesFolder(
+          gamesSub.existsSync() ? gamesSub.path : r.folderPath);
     }
     await AppPrefs.setSetupCompleted(true);
     widget.onComplete();

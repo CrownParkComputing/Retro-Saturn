@@ -281,7 +281,7 @@ class GettingStartedSteps {
           _point(
             Icons.looks_3_outlined,
             'Put your files in it',
-            'The BIOS goes in the BIOS folder, disc images in Games. '
+            'The BIOS .bin goes in the BIOS folder, disc images in Games. '
                 'Long-press a file anywhere in Files, choose Copy, then '
                 'paste it here.',
           ),
@@ -302,9 +302,11 @@ class GettingStartedSteps {
           ),
           _point(
             Icons.folder_open,
-            'Choose the folder',
-            'Pick the folder your BIOS and disc images live in, or the '
-                'folder above them. Everything inside it is included.',
+            'One folder, two subfolders',
+            'Make a folder called Saturn with BIOS and Games folders '
+                'inside: the BIOS .bin goes in BIOS, disc images in Games. '
+                'Pick the Saturn folder in the wizard and everything is '
+                'found.',
           ),
           _point(
             Icons.rule_folder_outlined,
