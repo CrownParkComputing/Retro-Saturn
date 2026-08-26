@@ -1,7 +1,8 @@
-// setup_wizard_screen.dart — Auto-scans the default Saturn folder
-// for BIOS + game files. Like ViceMultiplatform's wizard: one screen,
-// what was found is listed, user can pick a different folder or finish.
-// Compact: no big headings, tight padding.
+// setup_wizard_screen.dart — First-run setup, the Retro-Amiga way: a phased
+// walkthrough rather than one dense screen. Welcome (what did I just open),
+// two teaching pages (what a Saturn needs, where files can live on THIS
+// platform), then the choice, then the scan with the folder named, then the
+// results — and only then a Finish button.
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
@@ -10,6 +11,8 @@ import 'package:path_provider/path_provider.dart';
 import 'package:retro_saturn/data/friendly_path.dart';
 import 'package:retro_saturn/services/setup_scan_service.dart';
 import 'package:retro_saturn/screens/compliance_screen.dart';
+import 'package:retro_saturn/screens/getting_started.dart';
+import 'package:retro_saturn/services/storage_permission.dart';
 
 class SetupWizardScreen extends StatefulWidget {
   final VoidCallback onComplete;
@@ -19,9 +22,17 @@ class SetupWizardScreen extends StatefulWidget {
   State<SetupWizardScreen> createState() => _SetupWizardScreenState();
 }
 
+/// Where the walkthrough is up to. See Retro-Amiga's onboarding for why the
+/// phases exist: the old single screen showed the results, the picker and
+/// Finish all at once, before anything had said what the app was about to
+/// ask for.
+enum _Phase { welcome, primer, gate, scanning, results }
+
 class _SetupWizardScreenState extends State<SetupWizardScreen> {
+  _Phase _phase = _Phase.welcome;
   bool _busy = false;
   bool _scanned = false;
+  String? _notice;
 
   /// The scan folder as a Files-app location. The real path stays in [_folder]
   /// because the scanner needs it; this is the only thing shown. A container
@@ -34,7 +45,15 @@ class _SetupWizardScreenState extends State<SetupWizardScreen> {
   @override
   void initState() {
     super.initState();
-    _runFirstScan();
+    _maybeResumeExistingSetup();
+  }
+
+  /// A folder already chosen means this is a re-run (new build, or Settings)
+  /// rather than a first meeting -- skip the teaching and re-check it.
+  Future<void> _maybeResumeExistingSetup() async {
+    final String? existing = await AppPrefs.getGamesFolder();
+    if (existing == null || !mounted) return;
+    await _scanFolder(existing);
   }
 
   Future<void> _runFirstScan() async {
@@ -42,6 +61,7 @@ class _SetupWizardScreenState extends State<SetupWizardScreen> {
     initial ??= await SetupScanService.autoDetectFolderAsync();
     if (initial == null) {
       setState(() {
+        _phase = _Phase.results;
         _scanned = true;
         _folderShown = '(no folder selected)';
       });
@@ -51,10 +71,25 @@ class _SetupWizardScreenState extends State<SetupWizardScreen> {
   }
 
   Future<void> _scanFolder(String path) async {
+    // Disc images are read in place, so the scan needs the same access the
+    // emulator will: ask BEFORE walking, because a scan that silently finds
+    // nothing reads as "the app is broken", not "it was never allowed to
+    // look".
+    if (!await StoragePermission.ensure()) {
+      if (!mounted) return;
+      setState(() {
+        _phase = _Phase.gate;
+        _notice = 'Without "All files access" the app cannot read a games '
+            'folder in place. Grant it and try again.';
+      });
+      return;
+    }
     final docs = await getApplicationDocumentsDirectory();
     if (!mounted) return;
     setState(() {
       _busy = true;
+      _phase = _Phase.scanning;
+      _notice = null;
       _folderShown = friendlyPath(path, docs.path);
     });
     final r = await SetupScanService.scan(path);
@@ -63,10 +98,20 @@ class _SetupWizardScreenState extends State<SetupWizardScreen> {
       _result = r;
       _busy = false;
       _scanned = true;
+      _phase = _Phase.results;
     });
   }
 
   Future<void> _pickFolder() async {
+    // Permission before the picker: the system picker will happily hand
+    // back an SD-card path the app then cannot read.
+    if (!await StoragePermission.ensure()) {
+      if (!mounted) return;
+      setState(() => _notice =
+          'Without "All files access" the app cannot read a games folder '
+          'in place. Grant it and try again.');
+      return;
+    }
     final p = await FilePicker.platform.getDirectoryPath();
     if (p != null) await _scanFolder(p);
   }
@@ -88,11 +133,168 @@ class _SetupWizardScreenState extends State<SetupWizardScreen> {
     return Scaffold(
       backgroundColor: const Color(0xFF050607),
       body: SafeArea(
-        child: Column(children: [
-          if (_busy) const LinearProgressIndicator(),
-          Expanded(child: _buildBody()),
-          if (_scanned && !_busy) _buildActions(context),
-        ]),
+        child: switch (_phase) {
+          _Phase.welcome => _welcomeView(),
+          _Phase.primer => _primerView(),
+          _Phase.gate => _gateView(),
+          _Phase.scanning => _scanningView(),
+          _Phase.results => Column(children: [
+              if (_busy) const LinearProgressIndicator(),
+              Expanded(child: _buildBody()),
+              if (_scanned && !_busy) _buildActions(context),
+            ]),
+        },
+      ),
+    );
+  }
+
+  Widget _welcomeView() {
+    return Center(
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: <Widget>[
+            Center(
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(22),
+                child: Image.asset(
+                  'assets/images/app_icon.png',
+                  height: 104,
+                  width: 104,
+                  fit: BoxFit.cover,
+                  filterQuality: FilterQuality.medium,
+                  errorBuilder: (BuildContext c, Object e, StackTrace? s) =>
+                      const Icon(Icons.videogame_asset, size: 72),
+                ),
+              ),
+            ),
+            const SizedBox(height: 20),
+            Text(
+              'Retro-Saturn',
+              textAlign: TextAlign.center,
+              style: Theme.of(context).textTheme.headlineMedium,
+            ),
+            const SizedBox(height: 12),
+            const Text(
+              'A Sega Saturn, running on this device. Setup takes a couple '
+              'of minutes: point the app at your BIOS and disc images and '
+              'it reads them where they are.',
+              textAlign: TextAlign.center,
+              style: TextStyle(color: Colors.white54, height: 1.5),
+            ),
+            const SizedBox(height: 32),
+            FilledButton(
+              onPressed: () => setState(() => _phase = _Phase.primer),
+              child: const Padding(
+                padding: EdgeInsets.symmetric(vertical: 14),
+                child: Text('Get started'),
+              ),
+            ),
+            const SizedBox(height: 8),
+            TextButton(
+              onPressed: () => setState(() => _phase = _Phase.gate),
+              child: const Text('I have done this before'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _primerView() {
+    return GettingStartedGuide(
+      steps: <GuideStep>[
+        GettingStartedSteps.whatYouNeed(),
+        GettingStartedSteps.whereFilesGo(),
+      ],
+      closeLabel: 'Choose how to start',
+      onClose: () => setState(() => _phase = _Phase.gate),
+      onBack: () => setState(() => _phase = _Phase.welcome),
+    );
+  }
+
+  Widget _gateView() {
+    return ListView(
+      padding: const EdgeInsets.symmetric(horizontal: 24),
+      children: <Widget>[
+        const SizedBox(height: 24),
+        Text('Two ways in', style: Theme.of(context).textTheme.titleMedium),
+        const SizedBox(height: 10),
+        if (_notice != null)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 12),
+            child: Text(
+              _notice!,
+              style: const TextStyle(color: Colors.orangeAccent, height: 1.4),
+            ),
+          ),
+        const Text(
+          'JUST SHOW ME WHAT IT IS\n'
+          'The store-compliance page explains what the app does and what it '
+          'needs, with nothing required from you.',
+          style: TextStyle(color: Colors.white54, height: 1.4),
+        ),
+        const SizedBox(height: 10),
+        OutlinedButton(
+          onPressed: () => Navigator.of(context).push(MaterialPageRoute<void>(
+              builder: (_) => Scaffold(
+                    appBar: AppBar(title: const Text('Store compliance')),
+                    body: const ComplianceScreen(),
+                  ))),
+          child: const Padding(
+            padding: EdgeInsets.symmetric(vertical: 10),
+            child: Text('Store Compliance'),
+          ),
+        ),
+        const Divider(height: 28),
+        const Text(
+          'SET UP MY OWN SATURN\n'
+          'Your BIOS and your disc images. Choose the folder they live in '
+          'and they are read in place — nothing is copied or moved. You see '
+          'what was found before anything starts.',
+          style: TextStyle(color: Colors.white54, height: 1.4),
+        ),
+        const SizedBox(height: 10),
+        FilledButton(
+          onPressed: _busy ? null : _pickFolder,
+          child: const Padding(
+            padding: EdgeInsets.symmetric(vertical: 10),
+            child: Text('Choose my Saturn folder…'),
+          ),
+        ),
+        const SizedBox(height: 8),
+        TextButton(
+          onPressed: _busy ? null : _runFirstScan,
+          child: const Text('Scan the usual places instead'),
+        ),
+        const SizedBox(height: 8),
+        TextButton(
+          onPressed: () => setState(() => _phase = _Phase.primer),
+          child: const Text('Back to the guide'),
+        ),
+        const SizedBox(height: 24),
+      ],
+    );
+  }
+
+  Widget _scanningView() {
+    return Center(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: <Widget>[
+          const CircularProgressIndicator(),
+          const SizedBox(height: 16),
+          const Text('Scanning…'),
+          const SizedBox(height: 6),
+          Text(
+            _folderShown,
+            style: const TextStyle(fontSize: 11, color: Colors.white54),
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+          ),
+        ],
       ),
     );
   }
@@ -147,19 +349,10 @@ class _SetupWizardScreenState extends State<SetupWizardScreen> {
                 icon: const Icon(Icons.folder, size: 16),
                 label: const Text('Pick different folder'),
               ),
-              // The store-compliance page, reachable before anything has been
-              // supplied. A reviewer with no BIOS otherwise has nothing to
-              // read and nothing to do.
               TextButton.icon(
-                onPressed: () => Navigator.of(context).push(
-                    MaterialPageRoute<void>(
-                        builder: (_) => Scaffold(
-                              appBar: AppBar(
-                                  title: const Text('Store compliance')),
-                              body: const ComplianceScreen(),
-                            ))),
-                icon: const Icon(Icons.verified_outlined, size: 16),
-                label: const Text('Store Compliance'),
+                onPressed: () => setState(() => _phase = _Phase.gate),
+                icon: const Icon(Icons.arrow_back, size: 16),
+                label: const Text('Back'),
               ),
             ],
           ),

@@ -1,4 +1,15 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- The library is read IN PLACE from wherever the user keeps it -- usually
+         an SD card full of disc images ripped from their own collection. Scoped
+         storage cannot reach a raw path there, and copying a 500 MB disc image
+         per game into app storage is not an answer, so the app asks for
+         all-files access the way Retro-Amiga does. Play requires a
+         sensitive-permission declaration for this: "Core functionality",
+         reading the user's existing game library in place. -->
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"
+        android:maxSdkVersion="32" />
+    <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" />
+
     <application
         android:label="Retro-Saturn"
         android:name="${applicationName}"
