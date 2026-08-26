@@ -33,16 +33,38 @@ class ScanResult {
 
 class SetupScanService {
   /// Default folders to probe in priority order. First hit wins.
+  ///
+  /// This list used to open with a HARDCODED volume UUID -- the developer's
+  /// own SD card, '/storage/FEDD-B1FF/Ymir' -- which on every other device on
+  /// earth is a folder that cannot exist. Removable cards are found by
+  /// listing /storage instead: every mounted volume shows up there under its
+  /// UUID, whoever's card it is.
   static const _defaultFolders = <String>[
-    '/storage/FEDD-B1FF/Ymir',
     '/storage/emulated/0/Ymir',
     '/sdcard/Ymir',
   ];
 
+  /// Ymir folders on removable volumes, found rather than remembered.
+  static List<String> _removableFolders() {
+    final List<String> found = <String>[];
+    try {
+      for (final FileSystemEntity entry
+          in Directory('/storage').listSync(followLinks: false)) {
+        final String name = entry.path.split('/').last;
+        // Volume UUIDs look like FEDD-B1FF; skip the internal aliases.
+        if (name == 'emulated' || name == 'self') continue;
+        found.add('${entry.path}/Ymir');
+      }
+    } on FileSystemException {
+      // /storage unreadable: internal-only device, or no permission yet.
+    }
+    return found;
+  }
+
   /// Get the default scan folder for the current platform.
   static String? defaultFolder() {
     if (Platform.isAndroid) {
-      for (final f in _defaultFolders) {
+      for (final f in <String>[..._removableFolders(), ..._defaultFolders]) {
         if (Directory(f).existsSync()) return f;
       }
       return _defaultFolders.first; // fall back even if missing

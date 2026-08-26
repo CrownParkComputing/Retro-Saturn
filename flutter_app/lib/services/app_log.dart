@@ -21,6 +21,9 @@ import 'package:path/path.dart' as p;
 import 'package:retro_saturn/services/ymir_core_paths.dart';
 
 class AppLog {
+  /// Serialises file appends without blocking the UI thread.
+  static Future<void> _pendingWrite = Future<void>.value();
+
   AppLog._();
 
   /// Lines logged from Dart this session. Bounded so the log doesn't
@@ -60,7 +63,14 @@ class AppLog {
     final path = _filePath;
     if (path == null) return;
     try {
-      File(path).writeAsStringSync('$line\n', mode: FileMode.append);
+      // Async, deliberately: this ran a synchronous append on the UI thread
+      // for every single log line, and the log file can live on an SD card --
+      // one busy moment on the card and every logged event became a UI stall.
+      // Ordering is preserved by the future chain; a log write must never
+      // block the frame it is reporting on.
+      _pendingWrite = _pendingWrite.then(
+        (_) => File(path).writeAsString('$line\n', mode: FileMode.append),
+      );
     } catch (_) {
       // A log write must never take the app down.
     }
