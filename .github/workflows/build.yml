@@ -139,10 +139,17 @@ jobs:
           done
       - run: flutter build linux --release
         working-directory: flutter_app
+      # One archive, not a loose tree: the release step matches
+      # linux-bundle/*.tar.gz, and an unpacked bundle silently matched
+      # nothing - v0.2.1 shipped without its Linux build because of it.
+      - name: Pack the bundle
+        run: |
+          cd flutter_app/build/linux/x64/release
+          tar czf retro-saturn-linux-x64.tar.gz -C bundle .
       - uses: actions/upload-artifact@v4
         with:
           name: linux-bundle
-          path: flutter_app/build/linux/x64/release/bundle
+          path: flutter_app/build/linux/x64/release/retro-saturn-linux-x64.tar.gz
 
   ios:
     needs: analyze
