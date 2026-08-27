@@ -514,7 +514,10 @@ jobs:
           path: flutter_app/build/ios/ipa/*.ipa
 
   release:
-    needs: [android, linux, ios]
+    # iOS is deliberately NOT a gate: an IPA cannot be sideloaded from a
+    # GitHub release anyway, and a red Apple toolchain must not hold the
+    # Android and Linux artefacts hostage.
+    needs: [android, linux]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     steps:
