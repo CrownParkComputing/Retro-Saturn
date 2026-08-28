@@ -12,6 +12,8 @@ class YmirNativePaths {
   /// Absolute path to libymircore.so on the host (Linux).
   static String? get linuxHostLibrary {
     final candidates = <String>[
+      p.join(File(Platform.resolvedExecutable).parent.path,
+          'lib', 'libymircore.so'),
       p.join(Directory.current.path,
           'native', 'ymir_core', 'linux', 'build', 'libymircore.so'),
       p.join(Directory.current.path, '..', 'native', 'ymir_core',
