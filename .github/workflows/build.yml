@@ -77,13 +77,6 @@ jobs:
           mkdir -p "$RUNNER_TEMP/signing"
           echo "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/signing/release.jks"
 
-      - run: flutter build apk --release
-        working-directory: flutter_app
-        env:
-          ANDROID_KEYSTORE_PATH: ${{ runner.temp }}/signing/release.jks
-          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
-          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
-          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
       - run: flutter build appbundle --release
         working-directory: flutter_app
         env:
@@ -100,10 +93,6 @@ jobs:
           keytool -printcert -jarfile \
             flutter_app/build/app/outputs/bundle/release/app-release.aab \
             | grep -E "SHA256:|Owner:" || true
-      - uses: actions/upload-artifact@v4
-        with:
-          name: android-apk
-          path: flutter_app/build/app/outputs/flutter-apk/app-release.apk
       - uses: actions/upload-artifact@v4
         with:
           name: android-aab
@@ -139,18 +128,6 @@ jobs:
           done
       - run: flutter build linux --release
         working-directory: flutter_app
-      # One archive, not a loose tree: the release step matches
-      # linux-bundle/*.tar.gz, and an unpacked bundle silently matched
-      # nothing - v0.2.1 shipped without its Linux build because of it.
-      - name: Pack the bundle
-        run: |
-          cd flutter_app/build/linux/x64/release
-          tar czf retro-saturn-linux-x64.tar.gz -C bundle .
-      - uses: actions/upload-artifact@v4
-        with:
-          name: linux-bundle
-          path: flutter_app/build/linux/x64/release/retro-saturn-linux-x64.tar.gz
-
   ios:
     needs: analyze
     runs-on: macos-26
@@ -370,11 +347,6 @@ jobs:
             exit 1
           fi
           file "$binary"
-      - uses: actions/upload-artifact@v4
-        with:
-          name: ios-app
-          path: flutter_app/build/ios/iphoneos/Runner.app
-
       # --- Signed build, and the upload that actually creates an App Store
       # --- build. Everything above produces an artifact nobody can install.
       #
@@ -513,29 +485,3 @@ jobs:
           xcrun altool --upload-app -f "$ipa" -t ios \
             --apiKey "$ASC_KEY_ID" --apiIssuer "$ASC_ISSUER_ID"
           rm -f ~/private_keys/AuthKey_${ASC_KEY_ID}.p8
-
-      - uses: actions/upload-artifact@v4
-        if: steps.creds.outputs.have == 'true'
-        with:
-          name: ios-ipa
-          path: flutter_app/build/ios/ipa/*.ipa
-
-  release:
-    # iOS is deliberately NOT a gate: an IPA cannot be sideloaded from a
-    # GitHub release anyway, and a red Apple toolchain must not hold the
-    # Android and Linux artefacts hostage.
-    needs: [android, linux]
-    if: startsWith(github.ref, 'refs/tags/v')
-    runs-on: ubuntu-latest
-    # The default token is read-only; creating the release is a write.
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/download-artifact@v4
-      - uses: softprops/action-gh-release@v2
-        with:
-          files: |
-            android-apk/*.apk
-            android-aab/*.aab
-            ios-app/*.app.zip
-            linux-bundle/*.tar.gz
