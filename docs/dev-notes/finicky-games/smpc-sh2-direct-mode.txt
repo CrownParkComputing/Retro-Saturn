@@ -1,7 +1,0 @@
-===============================================
-Games that read peripherals in SH-2 direct mode
-===============================================
-
-Golden Axe - The Duel
-  Also expects the fixed bits in the first data of the Control Pad and 3D Control Pad readings to be exactly 1 0 0.
-  Failing to do so causes the game to boot back to the BIOS screen.

@@ -1,9 +1,0 @@
-=========================================================
-Games that are sensitive to VDP1 command processing times
-=========================================================
-
-Virtua Racing
-  Intro video freezes if VDP1 commands are processed too quickly
-
-Dragon Ball Z - Shinbutouden
-  Freezes after SEGA logo if VDP1 commands are processed too quickly

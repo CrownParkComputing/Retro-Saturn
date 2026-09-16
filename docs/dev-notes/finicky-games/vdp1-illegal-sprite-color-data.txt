@@ -1,9 +1,0 @@
-===============================================
-Games that draw sprites with illegal color data
-===============================================
-
-Sonic X-treme
-  Draws sprites in RGB 5:5:5 mode containing "illegal" color data (specifically 0x0060, read from VDP1 VRAM at 0x10000).
-  The manual states that 0x0000 is the only valid transparent color code and the entire range from 0x0001 to 0x7FFE is
-  "invalid", as it is reserved for palette data. In practice, all color data values from 0x0000 to 0x7FFE are considered
-  transparent in RGB 5:5:5 mode.

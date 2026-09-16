@@ -1,6 +1,0 @@
-===============================================
-Games that use CD Block Put Sector Data command
-===============================================
-
-Virtual On - Cyber Warriors
-  Uses the command to store replay buffers. Writes 2340 bytes per sector.

@@ -13,7 +13,7 @@ set(APPLICATION_ID "com.crownpark.ymir_multiplatform")
 # relocatable desktop bundle. Dart resolves this copy before development-tree
 # fallbacks, so an extracted release works outside its source checkout.
 set(YMIR_CORE_LIBRARY
-  "${CMAKE_CURRENT_SOURCE_DIR}/../../native/ymir_core/linux/build/libymircore.so"
+  "${CMAKE_CURRENT_SOURCE_DIR}/../../core/retro/linux/build/libymircore.so"
   CACHE FILEPATH "Path to the Saturn shared core")
 
 # Explicitly opt in to modern CMake behaviors to avoid warnings with recent
@@ -106,7 +106,7 @@ if(EXISTS "${YMIR_CORE_LIBRARY}")
     DESTINATION "${INSTALL_BUNDLE_LIB_DIR}" COMPONENT Runtime)
 else()
   message(FATAL_ERROR
-    "Saturn core not found at ${YMIR_CORE_LIBRARY}; run native/ymir_core/linux/build-ymir-linux.sh first")
+    "Saturn core not found at ${YMIR_CORE_LIBRARY}; run core/retro/linux/build-ymir-linux.sh first")
 endif()
 
 install(FILES "${FLUTTER_ICU_DATA_FILE}" DESTINATION "${INSTALL_BUNDLE_DATA_DIR}"

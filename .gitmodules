@@ -1,25 +1,4 @@
-[submodule "vendor/mio"]
-	path = vendor/mio
-	url = https://github.com/StrikerX3/mio.git
-[submodule "vendor/concurrentqueue/concurrentqueue"]
-	path = vendor/concurrentqueue/concurrentqueue
-	url = https://github.com/cameron314/concurrentqueue.git
-[submodule "vendor/imgui/imgui"]
-	path = vendor/imgui/imgui
-	url = https://github.com/ocornut/imgui.git
-	branch = docking
-[submodule "vendor/xxHash/xxHash"]
-	path = vendor/xxHash/xxHash
-	url = https://github.com/Cyan4973/xxHash
-[submodule "vendor/lz4/lz4"]
-	path = vendor/lz4/lz4
-	url = https://github.com/lz4/lz4.git
-[submodule "vendor/libchdr/libchdr"]
-	path = vendor/libchdr/libchdr
-	url = https://github.com/rtissera/libchdr.git
-[submodule "vcpkg"]
-	path = vcpkg
-	url = https://github.com/microsoft/vcpkg.git
-[submodule "vendor/fmt"]
-	path = vendor/fmt
-	url = https://github.com/fmtlib/fmt.git
+[submodule "core"]
+	path = core
+	url = https://github.com/CrownParkComputing/ymir.git
+	branch = cpc

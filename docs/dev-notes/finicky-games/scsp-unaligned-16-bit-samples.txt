@@ -1,8 +1,0 @@
-=====================================================
-Games that play 16-bit samples at unaligned addresses
-=====================================================
-
-These games play 16-bit samples with an unaligned address (odd addresses)
-
-System menu (US/EU version) - tray open/no disc chime
-Radiant Silvergun - one or two instruments on most songs

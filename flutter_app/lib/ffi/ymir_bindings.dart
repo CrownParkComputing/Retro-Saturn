@@ -1,5 +1,5 @@
 // ymir_bindings.dart — raw `dart:ffi` typedefs for the C ABI in
-// native/ymir_core/bridge/ymir_bridge.h.
+// core/retro/bridge/ymir_bridge.h.
 //
 // All functions are 32-bit-int returning except setters (void) and
 // `ymir_bridge_get_*` accessors. The framebuffer is XRGB8888

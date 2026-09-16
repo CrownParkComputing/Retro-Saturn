@@ -92,7 +92,7 @@ android {
         // brand-new app and stranding those installs. Pick once and keep.
         applicationId = "com.saturn_emu.android"
         // 26, matching the API the native core is actually built against
-        // (native/ymir_core/android/build.sh, ANDROID_API=26).
+        // (core/retro/android/build.sh, ANDROID_API=26).
         //
         // This was flutter.minSdkVersion, which is 24. The app therefore
         // declared support for API 24 and 25 devices that could never run it:
