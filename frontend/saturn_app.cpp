@@ -151,6 +151,36 @@ const KeyBind kKeyMap[] = {
     { SDL_SCANCODE_W,      YMIR_BUTTON_R     },
 };
 
+/*
+ * A real pad, mapped to the Saturn's.
+ *
+ * The Saturn has six face buttons in two rows -- A B C along the bottom, X Y Z
+ * along the top -- and an L and R. A modern pad has four face buttons and four
+ * shoulders, so the two rows have to borrow: the four faces are A B X Y, and
+ * the bumpers carry C and Z. That is the arrangement every Saturn emulator has
+ * settled on, and it puts the six-button fighting layout under the six buttons
+ * a thumb can reach.
+ */
+struct PadBind { SDL_GamepadButton pad; YmirButton button; };
+const PadBind kPadMap[] = {
+    { SDL_GAMEPAD_BUTTON_DPAD_UP,        YMIR_BUTTON_UP    },
+    { SDL_GAMEPAD_BUTTON_DPAD_DOWN,      YMIR_BUTTON_DOWN  },
+    { SDL_GAMEPAD_BUTTON_DPAD_LEFT,      YMIR_BUTTON_LEFT  },
+    { SDL_GAMEPAD_BUTTON_DPAD_RIGHT,     YMIR_BUTTON_RIGHT },
+    { SDL_GAMEPAD_BUTTON_START,          YMIR_BUTTON_START },
+    { SDL_GAMEPAD_BUTTON_SOUTH,          YMIR_BUTTON_A     },
+    { SDL_GAMEPAD_BUTTON_EAST,           YMIR_BUTTON_B     },
+    { SDL_GAMEPAD_BUTTON_WEST,           YMIR_BUTTON_X     },
+    { SDL_GAMEPAD_BUTTON_NORTH,          YMIR_BUTTON_Y     },
+    { SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER, YMIR_BUTTON_C     },
+    { SDL_GAMEPAD_BUTTON_LEFT_SHOULDER,  YMIR_BUTTON_Z     },
+};
+
+/* The triggers are axes, not buttons, so they are read rather than bound.
+ * Half travel counts as pressed: an analogue trigger standing in for a digital
+ * shoulder should fire where a thumb expects it to, not at the very bottom. */
+const Sint16 kTriggerOn = 16384;
+
 } /* namespace */
 
 /*
@@ -285,6 +315,37 @@ int main(int argc, char **argv)
                     : std::string();
     };
 
+    /* ---- whatever is plugged in ----
+     *
+     * Opened by instance id rather than by index, and re-opened on
+     * SDL_EVENT_GAMEPAD_ADDED, because a pad plugged in after the app started
+     * is the common case on a desktop and "restart it and it will work" is not
+     * an answer. Port 1 gets the first pad; a second pad drives port 2. */
+    std::vector<SDL_Gamepad *> pads;
+    auto open_pads = [&] {
+        for (SDL_Gamepad *g : pads) if (g) SDL_CloseGamepad(g);
+        pads.clear();
+        int count = 0;
+        if (SDL_JoystickID *ids = SDL_GetGamepads(&count)) {
+            for (int i = 0; i < count; ++i)
+                if (SDL_Gamepad *g = SDL_OpenGamepad(ids[i])) pads.push_back(g);
+            SDL_free(ids);
+        }
+    };
+    /* Which Saturn port a pad drives: the first pad is port 1, the second
+     * port 2, and anything after that is ignored -- the console has two
+     * sockets. */
+    auto port_of = [&](SDL_JoystickID which) -> int {
+        for (size_t i = 0; i < pads.size() && i < 2; ++i)
+            if (pads[i] && SDL_GetGamepadID(pads[i]) == which) return (int)i + 1;
+        return 0;
+    };
+    open_pads();
+
+    /* Trigger state, so a crossing of the threshold is sent once rather than
+     * every frame the trigger is held. */
+    bool trigger_held[2][2] = {{false, false}, {false, false}};
+
     /* ---- the picture ---- */
     SDL_Texture *frame = nullptr;
     int frame_w = 0, frame_h = 0;
@@ -341,6 +402,100 @@ int main(int argc, char **argv)
             } else if (running_view && show_pause && ev.type == SDL_EVENT_KEY_DOWN &&
                        ev.key.scancode == SDL_SCANCODE_ESCAPE) {
                 show_pause = false;
+            }
+
+            /* ---- a real pad ---- */
+            if (ev.type == SDL_EVENT_GAMEPAD_ADDED ||
+                ev.type == SDL_EVENT_GAMEPAD_REMOVED) {
+                open_pads();
+            }
+            else if (running_view && !show_pause &&
+                     (ev.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN ||
+                      ev.type == SDL_EVENT_GAMEPAD_BUTTON_UP)) {
+                const int port = port_of(ev.gbutton.which);
+                if (port) {
+                    const bool down = ev.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN;
+                    /* Back opens the menu, because a handheld has no Escape
+                     * key and a pad in your hands should not need one. */
+                    if (down && ev.gbutton.button == SDL_GAMEPAD_BUTTON_BACK) {
+                        show_pause = true;
+                    } else {
+                        for (const PadBind &b : kPadMap)
+                            if (b.pad == ev.gbutton.button)
+                                ymir_bridge_set_pad_button(ymir, port, b.button, down);
+                    }
+                }
+            }
+            else if (running_view && !show_pause &&
+                     ev.type == SDL_EVENT_GAMEPAD_AXIS_MOTION) {
+                const int port = port_of(ev.gaxis.which);
+                if (port) {
+                    const int slot = port - 1;
+                    if (ev.gaxis.axis == SDL_GAMEPAD_AXIS_LEFT_TRIGGER ||
+                        ev.gaxis.axis == SDL_GAMEPAD_AXIS_RIGHT_TRIGGER) {
+                        const bool left = ev.gaxis.axis == SDL_GAMEPAD_AXIS_LEFT_TRIGGER;
+                        const bool now = ev.gaxis.value > kTriggerOn;
+                        bool &was = trigger_held[slot][left ? 0 : 1];
+                        if (now != was) {
+                            was = now;
+                            ymir_bridge_set_pad_button(
+                                ymir, port, left ? YMIR_BUTTON_L : YMIR_BUTTON_R, now);
+                        }
+                    }
+                }
+            }
+        }
+
+        /*
+         * The sticks, read rather than evented.
+         *
+         * An axis event arrives only when the value changes, and a stick held
+         * off-centre produces none -- so a direction held would be sent once
+         * and then contradicted by nothing. Sampling the state each frame is
+         * what a pad actually is.
+         *
+         * The left stick doubles as the d-pad. Most Saturn games predate the
+         * 3D Control Pad and read only the digital directions, so a stick that
+         * does nothing in them is a pad that appears broken.
+         */
+        if (running_view && !show_pause) {
+            for (size_t i = 0; i < pads.size() && i < 2; ++i) {
+                SDL_Gamepad *g = pads[i];
+                if (!g) continue;
+                const int port = (int)i + 1;
+                const Sint16 lx = SDL_GetGamepadAxis(g, SDL_GAMEPAD_AXIS_LEFTX);
+                const Sint16 ly = SDL_GetGamepadAxis(g, SDL_GAMEPAD_AXIS_LEFTY);
+                const Sint16 rx = SDL_GetGamepadAxis(g, SDL_GAMEPAD_AXIS_RIGHTX);
+                const Sint16 ry = SDL_GetGamepadAxis(g, SDL_GAMEPAD_AXIS_RIGHTY);
+
+                /* Generous, because a worn stick rests off zero and a pad that
+                 * walks the menu on its own is worse than one that needs a
+                 * firmer push. */
+                const Sint16 dead = 12000;
+                static bool dirHeld[2][4] = {};
+                const bool want[4] = { ly < -dead, ly > dead, lx < -dead, lx > dead };
+                const YmirButton dirs[4] = { YMIR_BUTTON_UP, YMIR_BUTTON_DOWN,
+                                             YMIR_BUTTON_LEFT, YMIR_BUTTON_RIGHT };
+                for (int d = 0; d < 4; ++d) {
+                    if (want[d] != dirHeld[i][d]) {
+                        dirHeld[i][d] = want[d];
+                        ymir_bridge_set_pad_button(ymir, port, dirs[d], want[d]);
+                    }
+                }
+
+                /* And as an analogue stick, for the ports that are one. The
+                 * bridge wants 0..255 with 128 at rest. */
+                const auto to255 = [](Sint16 v) {
+                    return (int32_t)(((int)v + 32768) * 255 / 65535);
+                };
+                const saturn::Peripheral p = (port == 1) ? cfg.machine.port1
+                                                         : cfg.machine.port2;
+                if (p == saturn::Peripheral::AnalogPad ||
+                    p == saturn::Peripheral::ArcadeRacer ||
+                    p == saturn::Peripheral::MissionStick) {
+                    ymir_bridge_set_analog_axis(ymir, port, to255(lx), to255(ly),
+                                                to255(rx), to255(ry));
+                }
             }
         }
 
@@ -657,6 +812,20 @@ int main(int argc, char **argv)
                              ImGuiWindowFlags_AlwaysAutoResize);
                 ImGui::TextUnformatted(loaded_title.c_str());
                 TextDim("%d fps", ymir_bridge_get_fps(ymir));
+                /* What the app can actually see. "My pad does nothing" has
+                 * three causes -- no pad found, the wrong port, or an empty
+                 * socket -- and this tells them apart without a rebuild. */
+                if (pads.empty()) {
+                    TextDim("no gamepad found - keyboard only");
+                } else {
+                    TextDim("%zu gamepad%s: %s", pads.size(),
+                            pads.size() == 1 ? "" : "s",
+                            SDL_GetGamepadName(pads[0]) ? SDL_GetGamepadName(pads[0])
+                                                        : "unnamed");
+                }
+                TextDim("port 1: %s   port 2: %s",
+                        saturn::peripheral_name(cfg.machine.port1),
+                        saturn::peripheral_name(cfg.machine.port2));
                 ImGui::Separator();
                 const ImVec2 bw(ImGui::GetFontSize() * 12.0f, 0);
                 if (ImGui::Button("Resume", bw)) show_pause = false;
@@ -714,6 +883,7 @@ int main(int argc, char **argv)
 
     saturn::save_app_config(cfg_path, cfg);
     if (frame) SDL_DestroyTexture(frame);
+    for (SDL_Gamepad *g : pads) if (g) SDL_CloseGamepad(g);
     ymir_bridge_destroy(ymir);
     ImGui_ImplSDLRenderer3_Shutdown();
     ImGui_ImplSDL3_Shutdown();
