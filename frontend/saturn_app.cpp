@@ -27,6 +27,7 @@
  */
 #include "saturn_config.h"
 #include "saturn_library.h"
+#include "saturn_media.h"
 #include "saturn_setup.h"
 
 /* Stamped in by the build script; sensible if it was not. */
@@ -179,7 +180,63 @@ SDL_Texture *load_png(SDL_Renderer *ren, const char *path, int *out_w, int *out_
 
 /* Which of the console's faces is showing. Horizontal, and short: a Saturn
  * has a disc, a machine and two ports, and that really is all of it. */
-enum class Face { Discs, Console, About };
+enum class Face { Discs, Console, Saves, Downloads, About };
+
+/*
+ * The initial of a title, for the A-Z strip.
+ *
+ * Everything that is not a letter is a '#', which is where numbers, brackets
+ * and the occasional Japanese title end up -- one bucket for the awkward few
+ * rather than a row of buttons nobody presses. Leading articles are not
+ * stripped: a shelf sorted by what is printed on the spine is the shelf people
+ * expect, and "The House of the Dead" is filed under T on a real one too.
+ */
+char title_initial(const std::string &title)
+{
+    for (char c : title) {
+        if (c == ' ') continue;
+        const char u = (char)SDL_toupper((unsigned char)c);
+        return (u >= 'A' && u <= 'Z') ? u : '#';
+    }
+    return '#';
+}
+
+/*
+ * The A-Z strip itself. `letter` is 0 for "everything", otherwise the initial
+ * to show. Only the letters something is actually filed under are offered --
+ * a row of twenty-six buttons of which four do anything is a row of twenty-two
+ * dead ends.
+ */
+bool letter_strip(const std::string &have, char &letter, float width)
+{
+    bool changed = false;
+    /* Letters get a square; "All" gets whatever the word needs. A fixed width
+     * for both clipped it to "Al", which is not a word. */
+    auto key = [&](const char *label, char c, float w) {
+        const bool on = (letter == c);
+        if (on) ImGui::PushStyleColor(ImGuiCol_Button,
+                    ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
+        if (ImGui::Button(label, ImVec2(w, 0))) {
+            letter = on ? 0 : c;      /* pressing the live one clears it */
+            changed = true;
+        }
+        if (on) ImGui::PopStyleColor();
+    };
+    const float square = ImGui::GetFontSize() * 1.7f;
+    /* Wrap against what is actually available, not against a width passed in
+     * from somewhere further out: the strip lives inside a padded child and
+     * the last letter was landing past the edge. */
+    (void)width;
+    const float right = ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x;
+    key("All", 0, 0.0f);
+    for (char c : have) {
+        const char lbl[2] = { c, 0 };
+        const float step = square + ImGui::GetStyle().ItemSpacing.x;
+        if (ImGui::GetCursorPosX() + step < right) ImGui::SameLine();
+        key(lbl, c, square);
+    }
+    return changed;
+}
 
 /* The keyboard, mapped to a Control Pad. A desktop has no Saturn pad, and
  * these are the bindings every Saturn emulator has used since the 90s. */
@@ -371,6 +428,38 @@ int main(int argc, char **argv)
      * keyboard.
      */
     ImGui::GetIO().IniFilename = nullptr;   /* no imgui.ini beside the binary */
+
+    /*
+     * A real typeface, at a size that suits the screen it is on.
+     *
+     * ImGui's built-in font is a 13-pixel bitmap designed for a debug overlay.
+     * It is legible on a desktop monitor at arm's length and unreadable on a
+     * handheld, which is where most of this application's life is spent. Roboto
+     * comes with the ImGui the core already vendors, so this costs a file next
+     * to the binary and nothing else.
+     *
+     * The size follows the display's own scale rather than a constant: the
+     * same number of pixels is a comfortable size on a 1080p monitor and a
+     * smear on a 400ppi phone.
+     */
+    {
+        float scale = SDL_GetWindowDisplayScale(win);
+        if (scale <= 0.0f) scale = 1.0f;
+        const float pt = std::clamp(18.0f * scale, 14.0f, 40.0f);
+        bool got = false;
+        if (const char *base = SDL_GetBasePath()) {
+            const std::string f = std::string(base) + "assets/ui-font.ttf";
+            got = ImGui::GetIO().Fonts->AddFontFromFileTTF(f.c_str(), pt) != nullptr;
+        }
+        if (!got) {
+            /* No file: the built-in font, scaled, rather than nothing. */
+            ImGui::GetIO().Fonts->AddFontDefault();
+            ImGui::GetIO().FontGlobalScale = std::clamp(scale * 1.3f, 1.0f, 2.5f);
+        }
+        /* Everything else in the style is in pixels too, so it has to move
+         * with the text or the buttons end up tight around bigger words. */
+        ImGui::GetStyle().ScaleAllSizes(std::clamp(scale, 1.0f, 2.5f));
+    }
     apply_style();
     ImGui_ImplSDL3_InitForSDLRenderer(win, ren);
     ImGui_ImplSDLRenderer3_Init(ren);
@@ -688,6 +777,32 @@ int main(int argc, char **argv)
     }
 
     Face face = Face::Discs;
+    char disc_letter = 0;          /* A-Z strip on the shelf; 0 = everything */
+
+    /* ---- RetroMedia ----
+     *
+     * Signing in buys two things: cover art for anybody, and -- for an
+     * administrator -- discs downloaded straight onto the machine. The whole
+     * client is asynchronous, so nothing here ever blocks the frame: a
+     * media_begin_* call returns at once and the answer turns up in the poll
+     * below, whenever it is ready.
+     */
+    saturn::MediaAccount account;
+    std::vector<saturn::MediaGame> catalogue;
+    std::string media_message, media_email_prefill = saturn::media_last_email();
+    char media_email[128] = {0}, media_pass[128] = {0};
+    char media_search[96] = {0};
+    char media_letter = 0;
+    bool media_busy = false;
+    bool downloads_offered = false;
+    SDL_strlcpy(media_email, media_email_prefill.c_str(), sizeof media_email);
+    if (saturn::media_available()) saturn::media_begin_status();
+
+    auto refresh_catalogue = [&] {
+        media_busy = true;
+        const char one[2] = { media_letter, 0 };
+        saturn::media_begin_catalogue(media_search, media_letter ? one : "", true);
+    };
     /* The wizard runs until it is finished once, and can be asked for again
      * from Console. A disc on the command line skips it: somebody who
      * double-clicked a game has answered the only question it asks. */
@@ -1288,38 +1403,158 @@ int main(int argc, char **argv)
 
             /* The wordmark, sized to the window and never wider than a
              * third of it: this is a shelf, not a title screen. */
-            if (logo && logo_w > 0) {
-                const float want = ImGui::GetFontSize() * 7.0f;
-                const float w = std::min(want * (float)logo_w / (float)logo_h,
-                                         cw * 0.42f);
-                const float h = w * (float)logo_h / (float)logo_w;
-                ImGui::Image((ImTextureID)(intptr_t)logo, ImVec2(w, h));
-            } else {
-                ImGui::TextUnformatted("RETRO-SATURN");
-            }
-            ImGui::Spacing();
+            /*
+             * A rail down the left and the machine across the top of the rest.
+             *
+             * The name and the way around the application belong together and
+             * they belong out of the way: a quarter of the width, once, rather
+             * than a band of buttons eating into every screen underneath. That
+             * leaves the whole top of the working area for the Saturn itself,
+             * which is what somebody came to look at.
+             */
+            /*
+             * Phone, tablet or desktop -- decided from the window, not from
+             * the platform.
+             *
+             * A phone in landscape has a tablet's proportions and a desktop
+             * window dragged narrow has a phone's, and in both cases what the
+             * layout should do is the same. Measuring the window covers every
+             * device without a list of them, and it means the thing can be
+             * checked on a desktop by making the window small.
+             *
+             * The unit is the text size rather than pixels, so this holds on a
+             * 400ppi handheld and a 1080p monitor alike.
+             */
+            const float em = ImGui::GetFontSize();
+            const bool narrow  = cw < em * 34.0f;   /* a phone, near enough */
+            const bool two_col = cw > em * 46.0f;   /* room for two columns  */
+            /*
+             * Height matters as much as width, and separately.
+             *
+             * A phone turned on its side is wide enough for the rail and far
+             * too short for a tall header and a fat ports strip -- it is the
+             * one shape where getting this wrong leaves nothing between them
+             * for the actual list. So the two are asked separately rather than
+             * one "is it a phone" flag deciding both.
+             */
+            const bool shortscr = (float)win_h < em * 30.0f;
 
-            /* ============ the drive, across the top ============ */
-            /* Sized from what is in it, not guessed: three lines of text, a
-             * row of buttons, and the padding around them. The first version
-             * used a round number of font heights and clipped "Power on"
-             * behind a scrollbar. */
-            const float drive_h = ImGui::GetTextLineHeightWithSpacing() * 3.0f
-                                + ImGui::GetFrameHeightWithSpacing()
-                                + ImGui::GetStyle().WindowPadding.y * 2.0f;
-            ImGui::BeginChild("##drive", ImVec2(0, drive_h),
-                              ImGuiChildFlags_Borders);
+            const float port_art_h = ImGui::GetFrameHeight() * (shortscr ? 1.0f : 1.6f);
+            const float ports_row  = std::max(ImGui::GetFrameHeightWithSpacing(),
+                                              port_art_h + ImGui::GetStyle().ItemSpacing.y);
+            const float ports_h = ports_row + ImGui::GetStyle().WindowPadding.y * 3.0f;
+            const float body_h  = -(ports_h + ImGui::GetStyle().ItemSpacing.y);
+
+            /* Big enough for the machine to be a photograph of a machine
+             * rather than an icon of one, and never so big that the shelf
+             * beneath it has nowhere to go. */
+            const float head_h = std::min(fs * 9.5f,
+                                          (float)win_h * (narrow ? 0.20f : 0.26f));
+            /* A short screen has no spare rows for a picture of a console. */
+            const bool show_console_art = art_console && art_console_h > 0 &&
+                                          !narrow && !shortscr;
+            const float rail_w = std::max(cw * 0.22f, fs * 8.5f);
+
+            auto tab = [&](const char *label, Face f, const ImVec2 &size) {
+                const bool on = (face == f);
+                if (on) ImGui::PushStyleColor(ImGuiCol_Button,
+                            ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
+                if (ImGui::Button(label, size)) face = f;
+                if (on) ImGui::PopStyleColor();
+            };
+            const int n_tabs = downloads_offered ? 5 : 4;
+
+            /* ============ the rail, where there is width for one ============ */
+            if (!narrow) {
+                ImGui::BeginChild("##rail", ImVec2(rail_w, body_h));
+                if (logo && logo_w > 0) {
+                    const float w = ImGui::GetContentRegionAvail().x;
+                    ImGui::Image((ImTextureID)(intptr_t)logo,
+                                 ImVec2(w, w * (float)logo_h / (float)logo_w));
+                } else {
+                    ImGui::TextUnformatted("RETRO-SATURN");
+                }
+                ImGui::Spacing();
+                ImGui::Separator();
+                ImGui::Spacing();
+                const ImVec2 bsz(-FLT_MIN, fs * 2.0f);
+                tab("Discs", Face::Discs, bsz);
+                tab("Console", Face::Console, bsz);
+                tab("Saves", Face::Saves, bsz);
+                if (downloads_offered) tab("Downloads", Face::Downloads, bsz);
+                tab("About", Face::About, bsz);
+                ImGui::EndChild();
+                ImGui::SameLine();
+            }
+            ImGui::BeginChild("##right", ImVec2(0, body_h));
+
+            /* ============ the machine, and what is in it ============ */
+            ImGui::BeginChild("##drive", ImVec2(0, head_h), ImGuiChildFlags_Borders);
             {
-                /* The console, sat at the left of its own panel. This strip is
-                 * the machine -- what is in the drive, and the power button --
-                 * so the machine is what it should look like. */
-                if (art_console && art_console_h > 0) {
-                    const float h = drive_h - ImGui::GetStyle().WindowPadding.y * 2.0f;
+                const float h = head_h - ImGui::GetStyle().WindowPadding.y * 2.0f;
+
+                /*
+                 * The photograph is the first thing to go when space is short.
+                 *
+                 * It is decoration; the title of what is in the tray is not.
+                 * On a phone the two of them plus the disc left the title
+                 * hanging off the right-hand edge, so on a narrow screen the
+                 * machine steps aside and the spinning disc carries the idea
+                 * on its own.
+                 */
+                if (show_console_art) {
                     const float w = h * (float)art_console_w / (float)art_console_h;
                     ImGui::Image((ImTextureID)(intptr_t)art_console, ImVec2(w, h));
                     ImGui::SameLine();
-                    ImGui::BeginGroup();
                 }
+
+                /*
+                 * And the disc, turning, whenever there is one in the tray.
+                 *
+                 * A drive with something in it should look like a drive with
+                 * something in it. Drawn rather than photographed because it
+                 * has to move, and because the thing it stands for -- the
+                 * machine is doing something -- is exactly what an animation
+                 * says and a still does not.
+                 */
+                if (loaded_game_index >= 0) {
+                    const float d = h * 0.82f;
+                    const ImVec2 at = ImGui::GetCursorScreenPos();
+                    ImGui::Dummy(ImVec2(d, h));
+                    ImDrawList *dl = ImGui::GetWindowDrawList();
+                    const ImVec2 c(at.x + d * 0.5f, at.y + h * 0.5f);
+                    const float  r = d * 0.5f;
+                    /* Stopped while the machine is: a disc still spinning
+                     * behind a frozen picture is telling you something
+                     * untrue. */
+                    static float spin = 0.0f;
+                    spin += ImGui::GetIO().DeltaTime * (machine_running ? 2.4f : 0.0f);
+
+                    dl->AddCircleFilled(c, r, IM_COL32(24, 27, 38, 255), 48);
+                    /* The sheen: spokes of shifting hue, which is what a CD
+                     * does under a light and what makes it read as a CD at
+                     * this size. */
+                    for (int i = 0; i < 10; ++i) {
+                        const float a = spin + (float)i * 6.2831853f / 10.0f;
+                        float cr, cg, cb;
+                        ImGui::ColorConvertHSVtoRGB((float)i / 10.0f, 0.55f, 1.0f,
+                                                    cr, cg, cb);
+                        const ImU32 col = IM_COL32((int)(cr * 255), (int)(cg * 255),
+                                                   (int)(cb * 255), 70);
+                        dl->AddLine(ImVec2(c.x + cosf(a) * r * 0.34f,
+                                           c.y + sinf(a) * r * 0.34f),
+                                    ImVec2(c.x + cosf(a) * r * 0.97f,
+                                           c.y + sinf(a) * r * 0.97f),
+                                    col, r * 0.22f);
+                    }
+                    dl->AddCircle(c, r * 0.985f, IM_COL32(150, 170, 200, 90), 48, 1.5f);
+                    dl->AddCircleFilled(c, r * 0.30f, IM_COL32(14, 16, 23, 255), 32);
+                    dl->AddCircle(c, r * 0.30f, IM_COL32(150, 170, 200, 110), 32, 1.5f);
+                    dl->AddCircleFilled(c, r * 0.12f, IM_COL32(9, 10, 15, 255), 24);
+                    ImGui::SameLine();
+                }
+
+                ImGui::BeginGroup();
                 ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.42f, 0.71f, 0.97f, 1.0f));
                 ImGui::TextUnformatted(loaded_title.empty() ? "NO DISC"
                                                             : loaded_title.c_str());
@@ -1367,46 +1602,45 @@ int main(int argc, char **argv)
                         ImGui::PopID();
                     }
                 }
-                if (art_console && art_console_h > 0) ImGui::EndGroup();
+                ImGui::EndGroup();
             }
             ImGui::EndChild();
 
-            /* ============ the faces, horizontally ============ */
             ImGui::Spacing();
-            {
-                const float bw = (cw - ImGui::GetStyle().ItemSpacing.x * 2.0f) / 3.0f;
-                auto tab = [&](const char *label, Face f) {
-                    const bool on = (face == f);
-                    if (on) ImGui::PushStyleColor(ImGuiCol_Button,
-                                ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
-                    if (ImGui::Button(label, ImVec2(bw, fs * 2.0f))) face = f;
-                    if (on) ImGui::PopStyleColor();
-                };
-                tab("Discs", Face::Discs);
+
+            /* On a phone there is no room for a rail beside the content, so
+             * the same buttons go across in a row. Deliberately the same
+             * buttons and the same order -- a layout that rearranges itself is
+             * still meant to be the one you learned. */
+            if (narrow) {
+                const float bw = (ImGui::GetContentRegionAvail().x -
+                                  ImGui::GetStyle().ItemSpacing.x * (n_tabs - 1))
+                               / (float)n_tabs;
+                const ImVec2 bsz(bw, fs * 2.0f);
+                tab("Discs", Face::Discs, bsz);       ImGui::SameLine();
+                tab("Console", Face::Console, bsz);   ImGui::SameLine();
+                tab("Saves", Face::Saves, bsz);
+                if (downloads_offered) { ImGui::SameLine(); tab("Downloads", Face::Downloads, bsz); }
                 ImGui::SameLine();
-                tab("Console", Face::Console);
-                ImGui::SameLine();
-                tab("About", Face::About);
+                tab("About", Face::About, bsz);
+                ImGui::Spacing();
             }
-            ImGui::Spacing();
 
             /* ============ the face ============ */
-            /* Everything left over, minus the ports along the bottom. */
-            /* Tall enough for the photograph of whatever is plugged in, which
-             * is taller than the combo beside it. Measured rather than
-             * guessed: the first version of this panel was sized for text and
-             * clipped the port 2 selector clean off the bottom. */
-            const float port_art_h = ImGui::GetFrameHeight() * 1.6f;
-            const float ports_row  = std::max(ImGui::GetFrameHeightWithSpacing(),
-                                              port_art_h + ImGui::GetStyle().ItemSpacing.y);
-            const float ports_h = ImGui::GetTextLineHeightWithSpacing() + ports_row
-                                + ImGui::GetStyle().WindowPadding.y * 3.0f;
-            ImGui::BeginChild("##face",
-                              ImVec2(0, -(ports_h + ImGui::GetStyle().ItemSpacing.y)),
-                              ImGuiChildFlags_Borders);
+            ImGui::BeginChild("##face", ImVec2(0, 0), ImGuiChildFlags_Borders);
+
+            /*
+             * Widths inside here are the face's own, not the window's.
+             *
+             * `cw` is the whole shell, and it was still being used for column
+             * positions after the rail took a quarter of it -- so every
+             * right-hand column was measured off the edge of the screen and
+             * the filenames were cut in half.
+             */
+            const float fw = ImGui::GetContentRegionAvail().x;
 
             if (face == Face::Discs) {
-                ImGui::SetNextItemWidth(cw * 0.5f);
+                ImGui::SetNextItemWidth(fw * 0.5f);
                 ImGui::InputTextWithHint("##find", "Find a game...", search,
                                          sizeof search);
                 ImGui::SameLine();
@@ -1417,6 +1651,25 @@ int main(int argc, char **argv)
                         cfg.disc_root.empty() ? "(no folder set)"
                                               : cfg.disc_root.c_str());
                 ImGui::Separator();
+
+                /* Which initials there is anything under, in order. */
+                {
+                    std::string have;
+                    for (const saturn::Game &g : games) {
+                        const char c = title_initial(g.title);
+                        if (have.find(c) == std::string::npos) have.push_back(c);
+                    }
+                    std::sort(have.begin(), have.end());
+                    /* Shown as soon as there is more than one initial to
+                     * choose between. A shelf of five is still a shelf you
+                     * might want to jump around. */
+                    if (have.size() > 1) {
+                        ImGui::Spacing();
+                        letter_strip(have, disc_letter, fw);
+                        ImGui::Spacing();
+                        ImGui::Separator();
+                    }
+                }
 
                 if (games.empty()) {
                     ImGui::Spacing();
@@ -1430,6 +1683,8 @@ int main(int argc, char **argv)
                         const saturn::Game &g = games[i];
                         if (search[0] && !SDL_strcasestr(g.title.c_str(), search))
                             continue;
+                        if (disc_letter && title_initial(g.title) != disc_letter)
+                            continue;
                         ImGui::PushID((int)i);
                         const bool in_drive = (int)i == loaded_game_index;
                         if (in_drive) ImGui::PushStyleColor(ImGuiCol_Text,
@@ -1438,13 +1693,180 @@ int main(int argc, char **argv)
                                               ImVec2(0, fs * 1.9f)))
                             insert_disc((int)i, 0);
                         if (in_drive) ImGui::PopStyleColor();
-                        ImGui::SameLine(cw * 0.72f);
+                        ImGui::SameLine(fw * 0.66f);
                         if (g.multi()) TextDim("%zu discs", g.discs.size());
                         else           TextDim("%s", g.discs[0].file.c_str());
                         ImGui::PopID();
                     }
                     ImGui::EndChild();
                 }
+            }
+
+            else if (face == Face::Downloads) {
+                ImGui::Spacing();
+                TextDim("%s   %d credit%s, %d free left", account.email.c_str(),
+                        account.credits, account.credits == 1 ? "" : "s",
+                        account.free_remaining);
+                ImGui::SameLine(fw - fs * 7.0f);
+                if (ImGui::Button("Sign out")) {
+                    saturn::media_begin_logout();
+                    catalogue.clear();
+                }
+
+                ImGui::Spacing();
+                ImGui::SetNextItemWidth(fw * 0.45f);
+                if (ImGui::InputTextWithHint("##dlsearch", "Find a game...",
+                                             media_search, sizeof media_search,
+                                             ImGuiInputTextFlags_EnterReturnsTrue))
+                    refresh_catalogue();
+                ImGui::SameLine();
+                if (ImGui::Button("Search")) refresh_catalogue();
+                ImGui::SameLine();
+                TextDim(media_busy ? "working..." : "%zu title%s", catalogue.size(),
+                        catalogue.size() == 1 ? "" : "s");
+
+                /*
+                 * The whole alphabet here, not only the letters in view.
+                 *
+                 * The shelf offers the initials it has, because it has the
+                 * whole shelf in front of it. The catalogue is on the other
+                 * end of a network and is paged, so what is on this page says
+                 * nothing about what exists -- pressing S has to be able to
+                 * ask the server for S.
+                 */
+                ImGui::Spacing();
+                {
+                    std::string all = "#";
+                    for (char c = 'A'; c <= 'Z'; ++c) all.push_back(c);
+                    if (letter_strip(all, media_letter, fw)) refresh_catalogue();
+                }
+
+                ImGui::Spacing();
+                ImGui::Separator();
+                const std::string prog = saturn::media_progress();
+                if (!prog.empty()) {
+                    ImGui::TextUnformatted(prog.c_str());
+                } else if (!media_message.empty()) {
+                    TextDim("%s", media_message.c_str());
+                }
+
+                ImGui::BeginChild("##dl");
+                for (size_t i = 0; i < catalogue.size(); ++i) {
+                    const saturn::MediaGame &g = catalogue[i];
+                    ImGui::PushID((int)i);
+                    ImGui::TextUnformatted(g.title.c_str());
+                    ImGui::SameLine(fw * 0.56f);
+                    if (g.bytes > 0) TextDim("%.0f MB", (double)g.bytes / 1048576.0);
+                    else             TextDim("%d file%s", g.rom_files,
+                                             g.rom_files == 1 ? "" : "s");
+                    ImGui::SameLine(fw * 0.80f);
+                    ImGui::BeginDisabled(!prog.empty() || cfg.disc_root.empty());
+                    if (ImGui::SmallButton("Download"))
+                        saturn::media_begin_download(g.slug, cfg.disc_root);
+                    ImGui::EndDisabled();
+                    ImGui::PopID();
+                }
+                ImGui::EndChild();
+            }
+
+            else if (face == Face::Saves) {
+                /*
+                 * What is on disk, and a way to get rid of it.
+                 *
+                 * Save data is the one thing in this application that cannot
+                 * be downloaded again, so it should be possible to see what
+                 * there is, where it is, and how old it is -- without going
+                 * and finding a file manager.
+                 */
+                ImGui::Spacing();
+                ImGui::TextUnformatted("Where saves are kept");
+                TextDim("%s", saves_dir.c_str());
+                TextDimWrapped("Outside the app, so an uninstall or a new build "
+                               "cannot take them with it. Change it in Console, "
+                               "Setup.");
+
+                ImGui::Spacing(); ImGui::Separator(); ImGui::Spacing();
+                ImGui::TextUnformatted("The Saturn's memory");
+                {
+                    SDL_PathInfo info;
+                    if (SDL_GetPathInfo(bram_path.c_str(), &info) &&
+                        info.type == SDL_PATHTYPE_FILE) {
+                        SDL_DateTime dt{};
+                        if (SDL_TimeToDateTime((SDL_Time)info.modify_time, &dt, true))
+                            TextDim("backup-ram.bin  %llu bytes  last written "
+                                    "%04d-%02d-%02d %02d:%02d",
+                                    (unsigned long long)info.size,
+                                    dt.year, dt.month, dt.day, dt.hour, dt.minute);
+                        else
+                            TextDim("backup-ram.bin  %llu bytes",
+                                    (unsigned long long)info.size);
+                    } else {
+                        TextDim("not written yet");
+                    }
+                    TextDimWrapped("The 32 KiB battery-backed memory inside the "
+                                   "console. Every game that saves anything saves it "
+                                   "here, all of them sharing the one chip, exactly "
+                                   "as on the hardware.");
+                    if (ImGui::Button("Keep a dated copy")) {
+                        SDL_DateTime dt{};
+                        SDL_Time now = 0;
+                        SDL_GetCurrentTime(&now);
+                        SDL_TimeToDateTime(now, &dt, true);
+                        char stamp[64];
+                        snprintf(stamp, sizeof stamp,
+                                 "%s/backup-ram-%04d%02d%02d-%02d%02d%02d.bin",
+                                 saves_dir.c_str(), dt.year, dt.month, dt.day,
+                                 dt.hour, dt.minute, dt.second);
+                        say("Copy kept", ymir_bridge_save_internal_backup_memory(
+                                             ymir, stamp));
+                    }
+                    ImGui::SameLine();
+                    TextDim("before trying something that might overwrite it");
+                }
+
+                ImGui::Spacing(); ImGui::Separator(); ImGui::Spacing();
+                ImGui::TextUnformatted("Save states");
+                {
+                    int n = 0;
+                    char **found = SDL_GlobDirectory(states_dir.c_str(), "*", 0, &n);
+                    if (n <= 0) {
+                        TextDimWrapped("None yet. In a game, press Escape and use the "
+                                       "slots there, or F5 to save and F8 to load.");
+                    }
+                    ImGui::BeginChild("##states");
+                    for (int i = 0; found && i < n; ++i) {
+                        const std::string name = found[i];
+                        const std::string full = states_dir + "/" + name;
+                        SDL_PathInfo info;
+                        if (!SDL_GetPathInfo(full.c_str(), &info) ||
+                            info.type != SDL_PATHTYPE_FILE) continue;
+                        ImGui::PushID(i);
+                        ImGui::TextUnformatted(name.c_str());
+                        ImGui::SameLine(fw * 0.50f);
+                        SDL_DateTime dt{};
+                        if (SDL_TimeToDateTime((SDL_Time)info.modify_time, &dt, true))
+                            TextDim("%04d-%02d-%02d %02d:%02d   %.1f MB",
+                                    dt.year, dt.month, dt.day, dt.hour, dt.minute,
+                                    (double)info.size / (1024.0 * 1024.0));
+                        ImGui::SameLine(fw * 0.84f);
+                        /* Held, not clicked: deleting a save by brushing past
+                         * the wrong row is not a mistake worth allowing. */
+                        ImGui::SmallButton("Delete");
+                        if (ImGui::IsItemActive() &&
+                            ImGui::GetIO().MouseDownDuration[0] > 0.6f) {
+                            SDL_RemovePath(full.c_str());
+                            say("Deleted", YMIR_OK);
+                        }
+                        if (ImGui::IsItemHovered())
+                            ImGui::SetTooltip("Hold to delete");
+                        ImGui::PopID();
+                    }
+                    ImGui::EndChild();
+                    if (found) SDL_free(found);
+                }
+                if (!state_message.empty() &&
+                    SDL_GetTicks() - state_message_at <= 5000)
+                    ImGui::TextUnformatted(state_message.c_str());
             }
 
             else if (face == Face::Console) {
@@ -1461,10 +1883,32 @@ int main(int argc, char **argv)
                 saturn::Settings &s = cfg.machine;
                 bool dirty = false;
 
+                /*
+                 * Two columns where there is width for two, one where there
+                 * is not.
+                 *
+                 * A settings page you have to scroll is a settings page where
+                 * half the answers are out of sight, and the pages here are
+                 * mostly short blocks of related switches -- exactly the shape
+                 * that pairs up well. On a phone the same blocks simply run
+                 * down the page with a rule between them.
+                 */
+                auto col_begin = [&](const char *id) {
+                    if (two_col)
+                        ImGui::BeginTable(id, 2, ImGuiTableFlags_SizingStretchSame);
+                    if (two_col) { ImGui::TableNextRow(); ImGui::TableNextColumn(); }
+                };
+                auto col_next = [&] {
+                    if (two_col) ImGui::TableNextColumn();
+                    else { ImGui::Spacing(); ImGui::Separator(); ImGui::Spacing(); }
+                };
+                auto col_end = [&] { if (two_col) ImGui::EndTable(); };
+
                 if (ImGui::BeginTabBar("##console", ImGuiTabBarFlags_None)) {
 
                     if (ImGui::BeginTabItem("Setup")) {
                         ImGui::Spacing();
+                        col_begin("##setupcols");
                         ImGui::TextUnformatted("BIOS");
                         TextDimWrapped("The Saturn will not start without one, and this "
                                        "app does not include it -- it is Sega's. Point "
@@ -1476,13 +1920,16 @@ int main(int argc, char **argv)
                             SDL_strlcpy(bios_buf, cfg.bios_path.c_str(), sizeof bios_buf);
                             primed = true;
                         }
-                        ImGui::SetNextItemWidth(cw * 0.6f);
+                        /* In one column the field and its button sit on a
+                         * line together; in two there is no room, and the
+                         * button went off the edge of the column entirely. */
+                        ImGui::SetNextItemWidth(two_col ? -FLT_MIN : fw * 0.6f);
                         if (ImGui::InputText("##bios", bios_buf, sizeof bios_buf)) {
                             cfg.bios_path = bios_buf;
                             load_bios();
                             saturn::save_app_config(cfg_path, cfg);
                         }
-                        ImGui::SameLine();
+                        if (!two_col) ImGui::SameLine();
                         ImGui::BeginDisabled(saturn::pick_in_progress());
                         if (ImGui::Button("Browse...")) saturn::begin_pick_file();
                         ImGui::EndDisabled();
@@ -1507,16 +1954,64 @@ int main(int argc, char **argv)
                             SDL_strlcpy(root_buf, cfg.disc_root.c_str(), sizeof root_buf);
                             root_primed = true;
                         }
-                        ImGui::SetNextItemWidth(cw * 0.6f);
+                        ImGui::SetNextItemWidth(two_col ? -FLT_MIN : fw * 0.6f);
                         if (ImGui::InputText("##root", root_buf, sizeof root_buf)) {
                             cfg.disc_root = root_buf;
                             saturn::save_app_config(cfg_path, cfg);
                             rescan();
                         }
-                        ImGui::SameLine();
+                        if (!two_col) ImGui::SameLine();
                         ImGui::BeginDisabled(saturn::pick_in_progress());
                         if (ImGui::Button("Browse...##root")) saturn::begin_pick_folder();
                         ImGui::EndDisabled();
+
+                        col_next();
+                        ImGui::TextUnformatted("RetroMedia");
+                        if (!saturn::media_available()) {
+                            TextDimWrapped("Not built into this version.");
+                        } else if (account.signed_in) {
+                            TextDim("Signed in as %s%s", account.email.c_str(),
+                                    account.is_admin ? " (administrator)" : "");
+                            TextDimWrapped(account.is_admin
+                                ? "The Downloads tab is yours."
+                                : "Cover art only -- downloading discs needs an "
+                                  "administrator account.");
+                            if (ImGui::Button("Sign out##setup")) {
+                                saturn::media_begin_logout();
+                                catalogue.clear();
+                            }
+                        } else {
+                            TextDimWrapped("An account at "
+                                           "media.crownparkcomputing.com. An ordinary "
+                                           "email and password -- there is no Google "
+                                           "account involved.");
+                            ImGui::SetNextItemWidth(-FLT_MIN);
+                            ImGui::InputTextWithHint("##email", "email",
+                                                     media_email, sizeof media_email);
+                            ImGui::SetNextItemWidth(
+                                two_col ? -(ImGui::CalcTextSize("Sign in").x +
+                                            ImGui::GetStyle().FramePadding.x * 2.0f +
+                                            ImGui::GetStyle().ItemSpacing.x)
+                                        : fw * 0.42f);
+                            const bool enter = ImGui::InputTextWithHint(
+                                "##pass", "password", media_pass, sizeof media_pass,
+                                ImGuiInputTextFlags_Password |
+                                ImGuiInputTextFlags_EnterReturnsTrue);
+                            ImGui::SameLine();
+                            ImGui::BeginDisabled(media_busy || !media_email[0] ||
+                                                 !media_pass[0]);
+                            const bool go = ImGui::Button("Sign in");
+                            ImGui::EndDisabled();
+                            if ((enter || go) && media_email[0] && media_pass[0]) {
+                                media_busy = true;
+                                saturn::media_begin_login(media_email, media_pass);
+                                /* The password leaves this buffer the moment the
+                                 * request has it, and again when the answer
+                                 * arrives. It is never written anywhere. */
+                                SDL_memset(media_pass, 0, sizeof media_pass);
+                            }
+                        }
+                        if (!media_message.empty()) TextDim("%s", media_message.c_str());
 
                         ImGui::Spacing(); ImGui::Separator(); ImGui::Spacing();
                         ImGui::TextUnformatted("Saves folder");
@@ -1532,7 +2027,7 @@ int main(int argc, char **argv)
                             SDL_strlcpy(saves_buf, cfg.saves_dir.c_str(), sizeof saves_buf);
                             saves_primed = true;
                         }
-                        ImGui::SetNextItemWidth(cw * 0.6f);
+                        ImGui::SetNextItemWidth(-FLT_MIN);
                         if (ImGui::InputText("##saves", saves_buf, sizeof saves_buf)) {
                             cfg.saves_dir = saves_buf;
                             saturn::save_app_config(cfg_path, cfg);
@@ -1579,6 +2074,7 @@ int main(int argc, char **argv)
                             }
                             ImGui::EndDisabled();
                         }
+                        col_end();
                         ImGui::EndTabItem();
                     }
 
@@ -1595,7 +2091,7 @@ int main(int argc, char **argv)
                         ImGui::Spacing();
                         dirty |= ImGui::Checkbox("Emulate the SH2 cache (accurate, slower)",
                                                  &s.sh2_cache);
-                        ImGui::SetNextItemWidth(cw * 0.45f);
+                        ImGui::SetNextItemWidth(fw * (two_col ? 0.40f : 0.45f));
                         dirty |= ImGui::SliderInt("Processor speed", &s.sh2_clock,
                                                   50, 300, "%d%%");
                         TextDimWrapped("100% is the real machine. Games written for it "
@@ -1605,6 +2101,7 @@ int main(int argc, char **argv)
 
                     if (ImGui::BeginTabItem("Picture")) {
                         ImGui::Spacing();
+                        col_begin("##picturecols");
                         ImGui::TextUnformatted("Smoothing");
                         {
                             int sc = s.scaling;
@@ -1643,9 +2140,9 @@ int main(int argc, char **argv)
                                        "is not 4:3 -- so it trades the right geometry "
                                        "for the right pixels.");
 
-                        ImGui::Spacing(); ImGui::Separator(); ImGui::Spacing();
+                        col_next();
                         ImGui::TextUnformatted("Light gun crosshair");
-                        ImGui::SetNextItemWidth(cw * 0.45f);
+                        ImGui::SetNextItemWidth(fw * (two_col ? 0.40f : 0.45f));
                         dirty |= ImGui::SliderInt("##crosshair", &s.crosshair,
                                                   50, 600, "%d%%");
                         TextDimWrapped("Only drawn when a port is holding a Virtua "
@@ -1661,6 +2158,7 @@ int main(int argc, char **argv)
                                        "emulator's work, so they run on their own "
                                        "threads. Turn one off only to find out whether "
                                        "it is the cause of something.");
+                        col_end();
                         ImGui::EndTabItem();
                     }
 
@@ -1692,7 +2190,7 @@ int main(int argc, char **argv)
                         else         std::snprintf(meter, sizeof meter, "silent");
                         ImGui::Spacing();
                         ImGui::TextUnformatted("Output");
-                        ImGui::ProgressBar(lvl / 100.0f, ImVec2(cw * 0.5f, 0.0f), meter);
+                        ImGui::ProgressBar(lvl / 100.0f, ImVec2(fw * 0.4f, 0.0f), meter);
                         ImGui::SameLine();
                         ImGui::Text("%d ms behind", ymir_bridge_get_audio_queue_ms(ymir));
                         TextDimWrapped("The level leaving the emulator, and how far the "
@@ -1705,7 +2203,7 @@ int main(int argc, char **argv)
 
                     if (ImGui::BeginTabItem("Disc drive")) {
                         ImGui::Spacing();
-                        ImGui::SetNextItemWidth(cw * 0.45f);
+                        ImGui::SetNextItemWidth(fw * (two_col ? 0.40f : 0.45f));
                         dirty |= ImGui::SliderInt("Read speed", &s.cd_read_speed,
                                                   2, 200, "%dx");
                         TextDimWrapped("2x is the real drive. Faster cuts loading, and a "
@@ -1759,55 +2257,91 @@ int main(int argc, char **argv)
             }
             ImGui::EndChild();
 
+            ImGui::EndChild();     /* ##right */
+
             /* ============ the ports, along the bottom ============ */
             ImGui::Spacing();
             ImGui::BeginChild("##ports", ImVec2(0, ports_h), ImGuiChildFlags_Borders);
             {
                 const float half = (ImGui::GetContentRegionAvail().x -
-                                    ImGui::GetStyle().ItemSpacing.x) * 0.5f;
-                /* Each port in a box of its own, rather than two groups on
-                 * one line: a group's height depends on what is in it, so a
-                 * port holding a photograph pushed the one beside it down by
-                 * a few pixels and the two labels no longer lined up. */
-                auto port = [&](const char *label, saturn::Peripheral &p) {
-                    ImGui::BeginChild((std::string("##box") + label).c_str(),
+                                    ImGui::GetStyle().ItemSpacing.x * 4.0f) * 0.5f;
+                /*
+                 * A socket, with arrows rather than a drop-down.
+                 *
+                 * There are seven peripherals and the list never grows while
+                 * you look at it, so stepping through them is quicker than
+                 * opening a menu, reading it and picking -- and on a handheld
+                 * it is a shoulder button rather than a pointer. The caption
+                 * is gone: the picture says what is plugged in better than the
+                 * words "PORT 1" ever did, and left is the left socket.
+                 */
+                auto port = [&](const char *id, saturn::Peripheral &p) {
+                    ImGui::BeginChild((std::string("##box") + id).c_str(),
                                       ImVec2(half, 0));
-                    TextDim("%s", label);
-                    /* The thing itself, beside the name of it. A photograph of
-                     * a Virtua Gun says what "Virtua Gun" means to somebody
-                     * who has never owned one. */
-                    int aw = 0, ah = 0;
-                    float combo_w = half;
+                    const int last = (int)saturn::Peripheral::ShuttleMouse;
+                    auto step = [&](int by) {
+                        int v = ((int)p + by + (last + 1)) % (last + 1);
+                        p = (saturn::Peripheral)v;
+                        apply_ports();
+                        saturn::save_app_config(cfg_path, cfg);
+                    };
+
+                    const float arrow = ImGui::GetFrameHeight();
                     const float top = ImGui::GetCursorPosY();
-                    if (SDL_Texture *tex = art_for(p, &aw, &ah)) {
+                    ImGui::SetCursorPosY(top + (port_art_h - arrow) * 0.5f);
+                    ImGui::PushID(id);
+                    if (ImGui::ArrowButton("##prev", ImGuiDir_Left)) step(-1);
+                    ImGui::SameLine();
+
+                    int aw = 0, ah = 0;
+                    float used = arrow * 2.0f + ImGui::GetStyle().ItemSpacing.x * 3.0f;
+                    /* Same bargain as the header: on a narrow screen the name
+                     * of the device matters more than a picture of it, and
+                     * both together left "Control Pad" reading "Control". */
+                    SDL_Texture *ptex = (narrow || shortscr) ? nullptr
+                                                             : art_for(p, &aw, &ah);
+                    if (SDL_Texture *tex = ptex) {
                         const float w = port_art_h * (float)aw / (float)ah;
+                        ImGui::SetCursorPosY(top);
                         ImGui::Image((ImTextureID)(intptr_t)tex, ImVec2(w, port_art_h));
                         ImGui::SameLine();
-                        combo_w = half - w - ImGui::GetStyle().ItemSpacing.x;
+                        used += w + ImGui::GetStyle().ItemSpacing.x;
                     }
-                    /* Centred on the row, whether or not there is a photograph
-                     * on it: an empty socket that puts its selector at a
-                     * different height to the one beside it looks like a
-                     * mistake, because it is one. */
-                    ImGui::SetCursorPosY(top + (port_art_h - ImGui::GetFrameHeight()) * 0.5f);
-                    ImGui::SetNextItemWidth(combo_w);
-                    const char *cur = saturn::peripheral_name(p);
-                    if (ImGui::BeginCombo((std::string("##") + label).c_str(), cur)) {
-                        for (int i = 0; i <= (int)saturn::Peripheral::ShuttleMouse; ++i) {
-                            const auto v = (saturn::Peripheral)i;
-                            if (ImGui::Selectable(saturn::peripheral_name(v), p == v)) {
-                                p = v;
-                                apply_ports();
-                                saturn::save_app_config(cfg_path, cfg);
-                            }
-                        }
-                        ImGui::EndCombo();
-                    }
+
+                    /* The name, centred in whatever is left between the
+                     * arrows, so it does not jump about as the word changes
+                     * length. */
+                    const float name_w = std::max(ImGui::GetFontSize() * 4.0f,
+                                                  half - used);
+                    const char *name = saturn::peripheral_name(p);
+                    const float tw = ImGui::CalcTextSize(name).x;
+                    const float here = ImGui::GetCursorPosX();
+                    ImGui::SetCursorPosY(top + (port_art_h - ImGui::GetTextLineHeight()) * 0.5f);
+                    ImGui::SetCursorPosX(here + std::max(0.0f, (name_w - tw) * 0.5f));
+                    ImGui::TextUnformatted(name);
+
+                    ImGui::SameLine();
+                    ImGui::SetCursorPosX(here + name_w);
+                    ImGui::SetCursorPosY(top + (port_art_h - arrow) * 0.5f);
+                    if (ImGui::ArrowButton("##next", ImGuiDir_Right)) step(+1);
+                    ImGui::PopID();
                     ImGui::EndChild();
                 };
-                port("PORT 1", cfg.machine.port1);
+                port("p1", cfg.machine.port1);
                 ImGui::SameLine();
-                port("PORT 2", cfg.machine.port2);
+                /* A rule between them, because otherwise port one's "next"
+                 * arrow and port two's "previous" arrow sit side by side in
+                 * the middle of the strip looking like a pair. */
+                ImGui::SameLine(0.0f, ImGui::GetStyle().ItemSpacing.x);
+                {
+                    const ImVec2 p = ImGui::GetCursorScreenPos();
+                    ImGui::GetWindowDrawList()->AddLine(
+                        ImVec2(p.x, p.y),
+                        ImVec2(p.x, p.y + ImGui::GetContentRegionAvail().y),
+                        ImGui::GetColorU32(ImGuiCol_Separator), 1.0f);
+                }
+                ImGui::SameLine(0.0f, ImGui::GetStyle().ItemSpacing.x * 2.0f);
+                port("p2", cfg.machine.port2);
             }
             ImGui::EndChild();
             ImGui::End();
@@ -1867,6 +2401,38 @@ int main(int argc, char **argv)
                     }
                 }
                 ImGui::Separator();
+                TextDim("Controllers");
+                /* Here as well as on the shelf, because the moment you find
+                 * out you started with the wrong one is the moment the game
+                 * asks you to press something and nothing happens -- and
+                 * going back to the shelf to fix it costs you where you were. */
+                {
+                    auto pick = [&](const char *label, saturn::Peripheral &p) {
+                        int aw = 0, ah = 0;
+                        if (SDL_Texture *tex = art_for(p, &aw, &ah)) {
+                            const float h = ImGui::GetFrameHeight();
+                            ImGui::Image((ImTextureID)(intptr_t)tex,
+                                         ImVec2(h * (float)aw / (float)ah, h));
+                            ImGui::SameLine();
+                        }
+                        ImGui::SetNextItemWidth(bw.x - ImGui::GetFontSize() * 2.6f);
+                        if (ImGui::BeginCombo(label, saturn::peripheral_name(p))) {
+                            for (int i = 0; i <= (int)saturn::Peripheral::ShuttleMouse; ++i) {
+                                const auto v = (saturn::Peripheral)i;
+                                if (ImGui::Selectable(saturn::peripheral_name(v), p == v)) {
+                                    p = v;
+                                    apply_ports();
+                                    saturn::save_app_config(cfg_path, cfg);
+                                }
+                            }
+                            ImGui::EndCombo();
+                        }
+                    };
+                    pick("##pp1", cfg.machine.port1);
+                    pick("##pp2", cfg.machine.port2);
+                }
+
+                ImGui::Separator();
                 TextDim("Save state");
                 for (int sl = 0; sl < 4; ++sl) {
                     ImGui::PushID(100 + sl);
@@ -1919,6 +2485,7 @@ int main(int argc, char **argv)
                      * worse, an afternoon of somebody's progress. */
                     ymir_bridge_save_smpc_state(ymir, smpc_path.c_str());
                     save_bram();
+                    pointer.seen = false;   /* no sight waiting on the shelf */
                     running_view = false;
                     show_pause = false;
                 }
@@ -1934,9 +2501,19 @@ int main(int argc, char **argv)
          * where the Saturn thinks the shot went, and an arrow is the wrong
          * shape for aiming anyway.
          */
-        if (running_view && !show_pause && pointer.seen &&
-            (cfg.machine.port1 == saturn::Peripheral::VirtuaGun ||
-             cfg.machine.port2 == saturn::Peripheral::VirtuaGun)) {
+        const bool gun_in_a_port = cfg.machine.port1 == saturn::Peripheral::VirtuaGun ||
+                                   cfg.machine.port2 == saturn::Peripheral::VirtuaGun;
+        /* Inside the picture, not merely inside the window: the letterbox bars
+         * are not part of the Saturn's screen and a sight floating on them is
+         * aiming at nothing. */
+        const PictureRect gun_r = picture_rect(win_w, win_h, frame_w, frame_h,
+                                               cfg.machine);
+        const bool pointer_on_picture =
+            pointer.x >= gun_r.x && pointer.x < gun_r.x + gun_r.w &&
+            pointer.y >= gun_r.y && pointer.y < gun_r.y + gun_r.h;
+
+        if (running_view && !show_pause && pointer.seen && gun_in_a_port &&
+            pointer_on_picture) {
             ImDrawList *dl = ImGui::GetForegroundDrawList();
             const ImVec2 c(pointer.x, pointer.y);
             /* Sized off the window, not the font: a gun sight has to be found
@@ -1967,9 +2544,12 @@ int main(int argc, char **argv)
          * comes back for everything else -- including the menu, which you
          * still have to be able to click. */
         {
-            const bool aiming = running_view && !show_pause &&
-                (cfg.machine.port1 == saturn::Peripheral::VirtuaGun ||
-                 cfg.machine.port2 == saturn::Peripheral::VirtuaGun ||
+            /* Hidden only where the app is drawing a sight instead. Every
+             * menu, and the shelf, keeps an ordinary pointer -- they are
+             * things you click, and a crosshair over a list of games is the
+             * app wearing the game's clothes. */
+            const bool aiming = running_view && !show_pause && pointer_on_picture &&
+                (gun_in_a_port ||
                  cfg.machine.port1 == saturn::Peripheral::ShuttleMouse ||
                  cfg.machine.port2 == saturn::Peripheral::ShuttleMouse);
             static bool hidden = false;
@@ -1977,6 +2557,37 @@ int main(int argc, char **argv)
                 hidden = aiming;
                 if (aiming) SDL_HideCursor(); else SDL_ShowCursor();
             }
+        }
+
+        /* ---- whatever RetroMedia has finished ---- */
+        {
+            saturn::MediaResult mr;
+            while (saturn::media_poll(mr)) {
+                media_busy = false;
+                if (!mr.message.empty()) media_message = mr.message;
+                switch (mr.op) {
+                case saturn::MediaOp::Status:
+                case saturn::MediaOp::Login:
+                case saturn::MediaOp::Logout:
+                    account = mr.account;
+                    /* The password is not kept a moment longer than the
+                     * request that used it. */
+                    SDL_memset(media_pass, 0, sizeof media_pass);
+                    if (account.signed_in && account.is_admin) refresh_catalogue();
+                    break;
+                case saturn::MediaOp::Catalogue:
+                    if (mr.ok) catalogue = mr.games;
+                    break;
+                case saturn::MediaOp::Download:
+                    if (mr.ok) rescan();      /* it is a disc on the shelf now */
+                    break;
+                default: break;
+                }
+            }
+            downloads_offered = saturn::media_available() &&
+                                saturn::media_downloads_available() &&
+                                account.signed_in && account.is_admin;
+            if (!downloads_offered && face == Face::Downloads) face = Face::Discs;
         }
 
         /* One place decides whether the Saturn is running, and it is the only
