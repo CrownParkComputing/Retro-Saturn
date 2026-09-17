@@ -330,7 +330,6 @@ int main(int argc, char **argv)
                                     s.audio_interpolation);
         ymir_bridge_set_core_option(ymir, YMIR_OPT_CD_READ_SPEED, s.cd_read_speed);
         ymir_bridge_set_core_option(ymir, YMIR_OPT_CDBLOCK_LLE, s.cdblock_lle);
-        ymir_bridge_set_core_option(ymir, YMIR_OPT_RTC_MODE, s.rtc_mode);
     };
     auto apply_ports = [&] {
         ymir_bridge_set_peripheral_type(ymir, 1, (YmirPeripheralType)cfg.machine.port1);
@@ -1153,16 +1152,11 @@ int main(int argc, char **argv)
 
                 ImGui::Spacing(); ImGui::Separator(); ImGui::Spacing();
                 ImGui::TextUnformatted("Clock");
-                {
-                    int m = s.rtc_mode;
-                    dirty |= ImGui::RadioButton("Follow this device's clock", &m, 0);
-                    ImGui::SameLine();
-                    dirty |= ImGui::RadioButton("Emulate the Saturn's own", &m, 1);
-                    s.rtc_mode = m;
-                }
-                TextDimWrapped("Following the device's clock is why the Saturn knows "
-                               "the date without ever being told. Emulating its own "
-                               "is for a run that has to come out the same twice.");
+                TextDimWrapped("The Saturn follows this device's clock, which is why "
+                               "it knows the date without being told. There is no "
+                               "switch for it: setting the core's RTC mode crashes "
+                               "inside Ymir, and a control that ends the app is worse "
+                               "than no control.");
 
                 if (dirty) {
                     apply_options();
