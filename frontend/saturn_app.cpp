@@ -216,7 +216,16 @@ SDL_Texture *load_png(SDL_Renderer *ren, const char *path, int *out_w, int *out_
 
 /* Which of the console's faces is showing. Horizontal, and short: a Saturn
  * has a disc, a machine and two ports, and that really is all of it. */
-enum class Face { Discs, Console, Saves, Downloads, About };
+/*
+ * One screen per entry in the rail.
+ *
+ * These were five faces with the console's five settings pages hidden behind a
+ * tab bar inside one of them -- a row of tabs inside a column of buttons, two
+ * navigations stacked on top of each other to reach one page. The rail is the
+ * navigation now and there is only the one.
+ */
+enum class Face { Discs, Setup, Input, Picture, Sound, Processor, Drive,
+                  Saves, Downloads, About };
 
 /*
  * The initial of a title, for the A-Z strip.
@@ -1943,7 +1952,9 @@ int main(int argc, char **argv)
                 if (ImGui::Button(label, size)) face = f;
                 if (on) ImGui::PopStyleColor();
             };
-            const int n_tabs = downloads_offered ? 5 : 4;
+            /* Only the narrow layout uses this, to decide how many buttons
+             * fit on a row before it wraps. */
+            const int n_tabs = downloads_offered ? 10 : 9;
 
             /* ============ the rail, where there is width for one ============ */
             if (!narrow) {
@@ -1959,10 +1970,24 @@ int main(int argc, char **argv)
                 ImGui::Separator();
                 ImGui::Spacing();
                 const ImVec2 bsz(-FLT_MIN, fs * 2.0f);
+                /*
+                 * Everything, grouped by what it is for: the shelf, then the
+                 * console's own settings, then your files, then the app.
+                 * Rules between the groups rather than headings -- a rail of
+                 * ten buttons needs the shape, not the words.
+                 */
                 tab("Discs", Face::Discs, bsz);
-                tab("Console", Face::Console, bsz);
+                ImGui::Separator();
+                tab("Setup", Face::Setup, bsz);
+                tab("Input", Face::Input, bsz);
+                tab("Picture", Face::Picture, bsz);
+                tab("Sound", Face::Sound, bsz);
+                tab("Processor", Face::Processor, bsz);
+                tab("Disc drive", Face::Drive, bsz);
+                ImGui::Separator();
                 tab("Saves", Face::Saves, bsz);
                 if (downloads_offered) tab("Downloads", Face::Downloads, bsz);
+                ImGui::Separator();
                 tab("About", Face::About, bsz);
                 ImGui::EndChild();
                 ImGui::SameLine();
@@ -2201,13 +2226,9 @@ int main(int argc, char **argv)
                     show_pause = false;
                 }
                 ImGui::EndDisabled();
-                ImGui::SameLine();
-                ImGui::BeginDisabled(loaded_game_index < 0);
-                if (ImGui::Button("Eject", ImVec2(fs * 6.0f, 0))) {
-                    loaded_title.clear(); loaded_path.clear();
-                    loaded_game_index = -1; message.clear();
-                }
-                ImGui::EndDisabled();
+                /* No Eject. There is nothing to eject INTO: choosing another
+                 * disc replaces this one, which is the only thing anybody was
+                 * ever going to do next. */
 
                 /* The disc selector, only for games that have more than one.
                  * A single-disc game showing "Disc 1 of 1" is noise. */
@@ -2234,14 +2255,8 @@ int main(int argc, char **argv)
                 /* And the two sockets at the right-hand end, because they are
                  * part of the console and not a status bar along the bottom
                  * of the application. */
-                if (ports_in_header) {
-                    ImGui::SameLine();
-                    ImGui::BeginGroup();
-                    const float each = (h - ImGui::GetStyle().ItemSpacing.y) * 0.5f;
-                    port("p1", cfg.machine.port1, each);
-                    port("p2", cfg.machine.port2, each);
-                    ImGui::EndGroup();
-                }
+                /* The sockets live on the Input page now: a control you set
+                 * once does not belong beside the disc you change constantly. */
             }
             ImGui::EndChild();
 
@@ -2263,16 +2278,36 @@ int main(int argc, char **argv)
              * buttons and the same order -- a layout that rearranges itself is
              * still meant to be the one you learned. */
             if (narrow) {
+                /* Four to a row rather than ten: a tenth of a phone screen
+                 * is narrower than the word "Processor". They wrap. */
+                const int per_row = 4;
                 const float bw = (ImGui::GetContentRegionAvail().x -
-                                  ImGui::GetStyle().ItemSpacing.x * (n_tabs - 1))
-                               / (float)n_tabs;
+                                  ImGui::GetStyle().ItemSpacing.x * (per_row - 1))
+                               / (float)per_row;
+                (void)n_tabs;
                 const ImVec2 bsz(bw, fs * 2.0f);
-                tab("Discs", Face::Discs, bsz);       ImGui::SameLine();
-                tab("Console", Face::Console, bsz);   ImGui::SameLine();
-                tab("Saves", Face::Saves, bsz);
-                if (downloads_offered) { ImGui::SameLine(); tab("Downloads", Face::Downloads, bsz); }
-                ImGui::SameLine();
-                tab("About", Face::About, bsz);
+                /*
+                 * A row cannot hold ten, so on a narrow screen they wrap.
+                 * Same buttons and the same order -- a layout that rearranges
+                 * itself is still meant to be the one you learned.
+                 */
+                const float right = ImGui::GetCursorPosX() +
+                                    ImGui::GetContentRegionAvail().x;
+                auto flow = [&](const char *label, Face f) {
+                    const float step = bw + ImGui::GetStyle().ItemSpacing.x;
+                    if (ImGui::GetCursorPosX() + step < right) ImGui::SameLine();
+                    tab(label, f, bsz);
+                };
+                tab("Discs", Face::Discs, bsz);
+                flow("Setup", Face::Setup);
+                flow("Input", Face::Input);
+                flow("Picture", Face::Picture);
+                flow("Sound", Face::Sound);
+                flow("Processor", Face::Processor);
+                flow("Disc drive", Face::Drive);
+                flow("Saves", Face::Saves);
+                if (downloads_offered) flow("Downloads", Face::Downloads);
+                flow("About", Face::About);
                 ImGui::Spacing();
             }
 
@@ -2613,16 +2648,18 @@ int main(int argc, char **argv)
                     ImGui::TextUnformatted(state_message.c_str());
             }
 
-            else if (face == Face::Console) {
+            else if (face == Face::Setup || face == Face::Input ||
+                     face == Face::Picture || face == Face::Sound ||
+                     face == Face::Processor || face == Face::Drive) {
                 /*
-                 * Tabbed, because it is four unrelated subjects.
+                 * The settings pages, one per rail entry.
                  *
-                 * Setup, the processor, the picture, the sound and the disc
-                 * drive have nothing to do with each other, and as one long
-                 * column the thing you came for was always somewhere below the
-                 * fold. The tabs are named after the parts of the console
-                 * rather than after this application, so a setting is where
-                 * somebody would go looking for it.
+                 * They share a block because they share the two-column helper
+                 * and the one `dirty` flag that decides whether the machine
+                 * needs telling; which page is drawn is a plain test on the
+                 * face. Named after the parts of the console rather than after
+                 * this application, so a setting is where somebody would go
+                 * looking for it.
                  */
                 saturn::Settings &s = cfg.machine;
                 bool dirty = false;
@@ -2648,9 +2685,8 @@ int main(int argc, char **argv)
                 };
                 auto col_end = [&] { if (two_col) ImGui::EndTable(); };
 
-                if (ImGui::BeginTabBar("##console", ImGuiTabBarFlags_None)) {
-
-                    if (ImGui::BeginTabItem("Setup")) {
+                {
+                    if (face == Face::Setup) {
                         ImGui::Spacing();
                         col_begin("##setupcols");
                         ImGui::TextUnformatted("BIOS");
@@ -2878,10 +2914,75 @@ int main(int argc, char **argv)
                             ImGui::EndDisabled();
                         }
                         col_end();
-                        ImGui::EndTabItem();
                     }
 
-                    if (ImGui::BeginTabItem("Processor")) {
+                    if (face == Face::Input) {
+                        /*
+                         * The two sockets, on a page of their own.
+                         *
+                         * They used to sit in the header beside the machine,
+                         * which put a control you change once beside the disc
+                         * you change constantly. Here there is room to say
+                         * what each peripheral is as well as name it.
+                         */
+                        ImGui::Spacing();
+                        col_begin("##inputcols");
+                        for (int which = 1; which <= 2; ++which) {
+                            saturn::Peripheral &p = (which == 1) ? s.port1 : s.port2;
+                            ImGui::PushID(which);
+                            ImGui::Text("Port %d", which);
+                            ImGui::Spacing();
+
+                            int aw = 0, ah = 0;
+                            if (SDL_Texture *tex = art_for(p, &aw, &ah)) {
+                                const float w = std::min(fw * (two_col ? 0.40f : 0.32f),
+                                                         em * 9.0f);
+                                ImGui::Image((ImTextureID)(intptr_t)tex,
+                                             ImVec2(w, w * (float)ah / (float)aw));
+                            }
+                            ImGui::Spacing();
+
+                            const int last = (int)saturn::Peripheral::ShuttleMouse;
+                            auto step = [&](int by) {
+                                p = (saturn::Peripheral)(((int)p + by + last + 1) % (last + 1));
+                                apply_ports();
+                                saturn::save_app_config(cfg_path, cfg);
+                            };
+                            if (ImGui::ArrowButton("##prev", ImGuiDir_Left)) step(-1);
+                            ImGui::SameLine();
+                            ImGui::TextUnformatted(saturn::peripheral_name(p));
+                            ImGui::SameLine();
+                            if (ImGui::ArrowButton("##next", ImGuiDir_Right)) step(+1);
+
+                            TextDimWrapped(
+                                p == saturn::Peripheral::None         ? "Nothing plugged in." :
+                                p == saturn::Peripheral::ControlPad   ? "The pad the console came with. A gamepad maps straight onto it." :
+                                p == saturn::Peripheral::AnalogPad    ? "The 3D Control Pad: an analogue stick and two analogue triggers." :
+                                p == saturn::Peripheral::ArcadeRacer  ? "A wheel. Steering is analogue; the pedals are the triggers." :
+                                p == saturn::Peripheral::MissionStick ? "A flight stick, with a throttle." :
+                                p == saturn::Peripheral::VirtuaGun    ? "A light gun. The mouse aims and a finger aims; left fires, right reloads, middle is Start." :
+                                                                        "The Shuttle Mouse. The mouse moves it.");
+                            ImGui::PopID();
+                            if (which == 1) col_next();
+                        }
+                        col_end();
+
+                        ImGui::Spacing(); ImGui::Separator(); ImGui::Spacing();
+                        if (pads.empty()) {
+                            TextDimWrapped("No gamepad found -- keyboard only.");
+                        } else {
+                            TextDimWrappedF("%zu gamepad%s: %s", pads.size(),
+                                            pads.size() == 1 ? "" : "s",
+                                            SDL_GetGamepadName(pads[0])
+                                                ? SDL_GetGamepadName(pads[0]) : "unnamed");
+                        }
+                        TextDimWrapped("On a modern pad the bumpers are the Saturn's L "
+                                       "and R, and the triggers are the pedals: right "
+                                       "accelerates, left brakes. C and Z are the stick "
+                                       "clicks.");
+                    }
+
+                    if (face == Face::Processor) {
                         ImGui::Spacing();
                         dirty |= ImGui::Checkbox("Work out the region from the disc",
                                                  &s.region_auto);
@@ -2899,10 +3000,9 @@ int main(int argc, char **argv)
                                                   50, 300, "%d%%");
                         TextDimWrapped("100% is the real machine. Games written for it "
                                        "can and do break when it is faster.");
-                        ImGui::EndTabItem();
                     }
 
-                    if (ImGui::BeginTabItem("Picture")) {
+                    if (face == Face::Picture) {
                         ImGui::Spacing();
                         col_begin("##picturecols");
                         ImGui::TextUnformatted("Smoothing");
@@ -2962,10 +3062,9 @@ int main(int argc, char **argv)
                                        "threads. Turn one off only to find out whether "
                                        "it is the cause of something.");
                         col_end();
-                        ImGui::EndTabItem();
                     }
 
-                    if (ImGui::BeginTabItem("Sound")) {
+                    if (face == Face::Sound) {
                         ImGui::Spacing();
                         int interp = s.audio_interpolation;
                         dirty |= ImGui::RadioButton("Linear (as the hardware)", &interp, 1);
@@ -3001,10 +3100,9 @@ int main(int argc, char **argv)
                                        "itself to hold that around 60 ms; if it climbs "
                                        "and stays climbed, the emulator is running "
                                        "faster than the sound card can take it.");
-                        ImGui::EndTabItem();
                     }
 
-                    if (ImGui::BeginTabItem("Disc drive")) {
+                    if (face == Face::Drive) {
                         ImGui::Spacing();
                         ImGui::SetNextItemWidth(fw * (two_col ? 0.40f : 0.45f));
                         dirty |= ImGui::SliderInt("Read speed", &s.cd_read_speed,
@@ -3023,10 +3121,9 @@ int main(int argc, char **argv)
                                        "for the core's RTC mode: setting it crashes "
                                        "inside Ymir, and a control that ends the app is "
                                        "worse than no control.");
-                        ImGui::EndTabItem();
                     }
 
-                    ImGui::EndTabBar();
+
                 }
 
                 if (dirty) {
