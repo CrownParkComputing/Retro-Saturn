@@ -2534,9 +2534,20 @@ int main(int argc, char **argv)
                      * name on it, which is still a shelf.
                      */
                     ImGui::BeginChild("##shelf");
-                    const float card_w = em * 9.0f;
+                    /*
+                     * Sized to fit a sensible number across, not to a fixed
+                     * multiple of the text.
+                     *
+                     * em * 9 is a reasonable card on a desktop and enormous on
+                     * a handheld, where the text is twice the size: three
+                     * covers filled a 1080p screen. Aiming for six across and
+                     * clamping keeps them recognisable on both.
+                     */
+                    const float wide_area = ImGui::GetContentRegionAvail().x;
+                    const float card_w = std::clamp(wide_area / 6.0f,
+                                                    em * 5.0f, em * 9.0f);
                     const float step = card_w + ImGui::GetStyle().ItemSpacing.x;
-                    const int per_row = std::max(1, (int)(ImGui::GetContentRegionAvail().x / step));
+                    const int per_row = std::max(1, (int)(wide_area / step));
                     int budget = 3;
                     int shown = 0;
                     for (size_t i = 0; i < games.size(); ++i) {
@@ -2696,9 +2707,11 @@ int main(int argc, char **argv)
                  */
                 ImGui::BeginChild("##dl");
                 {
-                    const float card_w = em * 9.0f;
+                    const float wide_area = ImGui::GetContentRegionAvail().x;
+                    const float card_w = std::clamp(wide_area / 6.0f,
+                                                    em * 5.0f, em * 9.0f);
                     const float step = card_w + ImGui::GetStyle().ItemSpacing.x;
-                    const int per_row = std::max(1, (int)(ImGui::GetContentRegionAvail().x / step));
+                    const int per_row = std::max(1, (int)(wide_area / step));
                     int budget = 3;          /* new art requests this frame */
 
                     for (size_t i = 0; i < catalogue.size(); ++i) {
