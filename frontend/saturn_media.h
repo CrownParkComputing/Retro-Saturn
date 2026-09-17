@@ -36,6 +36,12 @@ struct MediaGame {
     std::string slug;
     std::string title;
     std::string preview;
+    /** Which kinds of picture this title has, comma separated -- "titles",
+     *  "box2d", "boxback", "marquee", "cartridges" and so on. The server
+     *  stores them as media/<kind>/<same name>.png, so `preview` plus one of
+     *  these names is enough to ask for any of them without a second
+     *  request per game. */
+    std::string media_types;
     int         rom_files = 0;
     long long   bytes     = 0;
 };

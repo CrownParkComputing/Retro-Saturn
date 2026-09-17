@@ -938,6 +938,14 @@ MediaResult do_catalogue(const std::string &search, const std::string &letter,
             mg.title = g.s("title");
             if (mg.title.empty()) mg.title = g.s("name");
             mg.preview = g.s("preview");
+            if (const Json *mt = g.find("mediaTypes")) {
+                if (mt->type == Json::Type::Arr) {
+                    for (const Json &t : mt->arr) {
+                        if (!mg.media_types.empty()) mg.media_types += ",";
+                        mg.media_types += t.str;
+                    }
+                }
+            }
             mg.bytes   = g.i("totalBytes");
             if (const Json *avail = g.find("availability"))
                 mg.rom_files = (int)avail->i("romFiles");
@@ -953,12 +961,18 @@ MediaResult do_catalogue(const std::string &search, const std::string &letter,
     return r;
 }
 
-/* A stable filename for a slug. FNV-1a rather than a hash library: this names
- * a cache file, it is not defending anything. */
-std::string cache_name(const std::string &slug)
+/* A stable filename for one picture of one game. FNV-1a rather than a hash
+ * library: this names a cache file, it is not defending anything.
+ *
+ * The path goes into the hash as well as the slug. Keyed on the slug alone,
+ * asking for a title screen and then a box scan of the same game returned the
+ * first one twice -- the second was never fetched because its cache file was
+ * already there under the same name. */
+std::string cache_name(const std::string &slug, const std::string &path)
 {
     unsigned long long h = 1469598103934665603ull;
     for (unsigned char c : slug) { h ^= c; h *= 1099511628211ull; }
+    for (unsigned char c : path) { h ^= c; h *= 1099511628211ull; }
     char buf[32];
     snprintf(buf, sizeof buf, "%016llx.rda", h);
     return buf;
@@ -1266,7 +1280,7 @@ MediaResult do_artwork(const std::string &slug, const std::string &preview)
 
     const std::string dir = config_dir() + "media-art";
     SDL_CreateDirectory(dir.c_str());
-    const std::string cache = dir + "/" + cache_name(slug);
+    const std::string cache = dir + "/" + cache_name(slug, preview);
 
     {   /* Already have it: the launcher asks for every title in the library
          * each time artwork is fetched, and re-downloading what is on disk

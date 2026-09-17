@@ -193,6 +193,79 @@ enum class Face { Discs, Console, Saves, Downloads, About };
  * stripped: a shelf sorted by what is printed on the spine is the shelf people
  * expect, and "The House of the Dead" is filed under T on a real one too.
  */
+/*
+ * A title reduced to something two catalogues can agree on.
+ *
+ * A disc on the shelf is called "Daytona USA (US).chd" and the same game in
+ * the catalogue is called "Daytona USA". Region tags, punctuation, spacing and
+ * case are all noise for the purpose of deciding they are the same game, so
+ * they all go, and anything from the first bracket onwards goes with them.
+ */
+std::string match_key(const std::string &title)
+{
+    std::string k;
+    for (char c : title) {
+        if (c == '(' || c == '[') break;
+        if (SDL_isalnum((unsigned char)c))
+            k.push_back((char)SDL_tolower((unsigned char)c));
+    }
+    /*
+     * And the definite article, wherever the cataloguer put it.
+     *
+     * A disc is called "The House of the Dead" and the catalogue files it as
+     * "House of the Dead, The" -- the same game, two conventions, no match.
+     * Stripping a leading or trailing "the" gives both sides the same answer.
+     * Only at the ends: the one in the middle of that title is part of it.
+     */
+    if (k.size() > 5 && k.compare(0, 3, "the") == 0) k.erase(0, 3);
+    if (k.size() > 5 && k.compare(k.size() - 3, 3, "the") == 0) k.erase(k.size() - 3);
+    return k;
+}
+
+/* The kinds of picture the catalogue keeps, in the order the setting uses. */
+const char *const kArtKind[]  = { "titles", "box2d", "boxback", "marquee" };
+const char *const kArtLabel[] = { "Title screen", "Box, front", "Box, back", "Marquee" };
+/* Roughly the shape each kind actually is, so the card fits the picture
+ * instead of framing it in empty plate. A title screen is a 4:3 screenshot, a
+ * box scan is a tall Saturn case, a marquee is a wide banner. */
+const float kArtAspect[]      = { 0.78f, 1.42f, 1.42f, 0.5f };
+const int kArtKinds = 4;
+
+/*
+ * The path to one kind of picture, derived from the one the catalogue hands
+ * out for free.
+ *
+ * `preview` is always media/titles/<Name>.png, and the server files every
+ * other kind under the same name in its own folder. Swapping the folder is
+ * therefore enough, and it saves a request per game to find out something we
+ * can already work out. `mediaTypes` says which ones exist, so a game with no
+ * box scan falls back to the title screen rather than asking for a 404.
+ */
+std::string art_path_for_kind(const saturn::MediaGame &g, const char *want)
+{
+    if (g.preview.empty() || !want) return std::string();
+    if (g.media_types.find(want) == std::string::npos) return std::string();
+    const size_t slash = g.preview.rfind('/');
+    if (slash == std::string::npos) return std::string();
+    size_t dir = g.preview.rfind('/', slash - 1);
+    dir = (dir == std::string::npos) ? 0 : dir + 1;
+    return g.preview.substr(0, dir) + want + g.preview.substr(slash);
+}
+
+std::string art_path_for(const saturn::MediaGame &g, int kind)
+{
+    if (g.preview.empty()) return std::string();
+    if (kind <= 0 || kind >= kArtKinds) return g.preview;
+    const std::string want = kArtKind[kind];
+    if (g.media_types.find(want) == std::string::npos) return g.preview;
+
+    const size_t slash = g.preview.rfind('/');
+    if (slash == std::string::npos) return g.preview;
+    size_t dir = g.preview.rfind('/', slash - 1);
+    dir = (dir == std::string::npos) ? 0 : dir + 1;
+    return g.preview.substr(0, dir) + want + g.preview.substr(slash);
+}
+
 char title_initial(const std::string &title)
 {
     for (char c : title) {
@@ -780,6 +853,7 @@ int main(int argc, char **argv)
 
     Face face = Face::Discs;
     char disc_letter = 0;          /* A-Z strip on the shelf; 0 = everything */
+    bool shelf_grid = true;        /* covers rather than a column of names */
 
     /* ---- RetroMedia ----
      *
@@ -790,7 +864,17 @@ int main(int argc, char **argv)
      * below, whenever it is ready.
      */
     saturn::MediaAccount account;
-    std::vector<saturn::MediaGame> catalogue;
+    std::vector<saturn::MediaGame> catalogue;      /* what the Downloads page shows */
+    /*
+     * And the whole thing, once, for matching the shelf against.
+     *
+     * The Downloads list is filtered by whatever letter and search are in
+     * force, which makes it useless for answering "is this disc of mine in the
+     * catalogue, and what is its cover?" -- so the full list is fetched once
+     * at sign-in and left alone.
+     */
+    std::map<std::string, saturn::MediaGame> by_key;
+    bool have_full_catalogue = false;
     std::string media_message, media_email_prefill = saturn::media_last_email();
     char media_email[128] = {0}, media_pass[128] = {0};
     char media_search[96] = {0};
@@ -813,7 +897,73 @@ int main(int argc, char **argv)
     struct Art { SDL_Texture *tex = nullptr; int w = 0, h = 0; };
     std::map<std::string, Art> art;
     std::set<std::string> art_asked;
+    std::map<std::string, std::string> art_pending;   /* slug -> key in flight */
     int art_in_flight = 0;
+
+    /*
+     * One cover, drawn the same on the shelf and in the catalogue.
+     *
+     * Returns true if the card was clicked. The art request is made here too,
+     * so a card that has never been seen asks for its own picture and one that
+     * has been answered already does not ask again.
+     */
+    auto cover_card = [&](const std::string &slug, const std::string &preview,
+                          const std::string &title, const char *sub,
+                          float card_w, int *budget) -> bool {
+        const float cover_h = card_w *
+            kArtAspect[std::clamp(cfg.machine.art_kind, 0, kArtKinds - 1)];
+        /* Keyed by the picture, not by the game: switching the shelf from
+         * title screens to box scans must ask for something new, and it does
+         * not if both are filed under the slug. */
+        const std::string key = slug + "#" + preview;
+        auto it = art.find(key);
+        if (it == art.end() && budget && *budget > 0 && art_in_flight < 4 &&
+            !slug.empty() && !preview.empty() &&
+            art_asked.find(key) == art_asked.end()) {
+            art_asked.insert(key);
+            art_in_flight++;
+            (*budget)--;
+            art_pending[slug] = key;
+            saturn::media_begin_artwork(slug, preview);
+        }
+
+        ImGui::BeginGroup();
+        const ImVec2 at = ImGui::GetCursorScreenPos();
+        ImGui::Dummy(ImVec2(card_w, cover_h));
+        const bool hit = ImGui::IsItemClicked();
+        ImDrawList *dl = ImGui::GetWindowDrawList();
+        if (it != art.end() && it->second.tex) {
+            /* Fitted inside the box, whatever shape the artwork turned out
+             * to be -- the catalogue has both title screens and box scans. */
+            const Art &a = it->second;
+            float w = card_w, h = w * (float)a.h / (float)a.w;
+            if (h > cover_h) { h = cover_h; w = h * (float)a.w / (float)a.h; }
+            dl->AddImage((ImTextureID)(intptr_t)a.tex,
+                         ImVec2(at.x + (card_w - w) * 0.5f, at.y + (cover_h - h) * 0.5f),
+                         ImVec2(at.x + (card_w + w) * 0.5f, at.y + (cover_h + h) * 0.5f));
+        } else {
+            /* A plate where the cover will be, so the grid does not reflow
+             * under the pointer as pictures arrive. */
+            dl->AddRectFilled(at, ImVec2(at.x + card_w, at.y + cover_h),
+                              IM_COL32(28, 32, 44, 255), 4.0f);
+            dl->AddRect(at, ImVec2(at.x + card_w, at.y + cover_h),
+                        IM_COL32(60, 70, 92, 255), 4.0f);
+        }
+
+        /* Two lines for the title, always. Left to wrap freely a long one
+         * made its card taller than its neighbours, and a row is as tall as
+         * its tallest card, so the whole grid went ragged. */
+        ImGui::BeginChild((std::string("t") + slug + title).c_str(),
+                          ImVec2(card_w, ImGui::GetTextLineHeight() * 2.2f));
+        ImGui::PushTextWrapPos(card_w);
+        ImGui::TextUnformatted(title.c_str());
+        ImGui::PopTextWrapPos();
+        if (ImGui::IsWindowHovered()) ImGui::SetTooltip("%s", title.c_str());
+        ImGui::EndChild();
+        if (sub && *sub) TextDim("%s", sub);
+        ImGui::EndGroup();
+        return hit;
+    };
 
     auto refresh_catalogue = [&] {
         media_busy = true;
@@ -1629,6 +1779,47 @@ int main(int argc, char **argv)
                     static float spin = 0.0f;
                     spin += ImGui::GetIO().DeltaTime * (machine_running ? 2.4f : 0.0f);
 
+                    /*
+                     * The real disc, if the catalogue has a picture of one.
+                     *
+                     * The catalogue files disc and cartridge scans under
+                     * "cartridges", and a Saturn's is a printed CD. Spun at
+                     * the same rate as the drawn one, so inserting a game
+                     * looks like putting that game in.
+                     */
+                    SDL_Texture *disc_tex = nullptr;
+                    if (loaded_game_index >= 0) {
+                        auto m = by_key.find(match_key(games[loaded_game_index].title));
+                        if (m != by_key.end() &&
+                            m->second.media_types.find("cartridges") != std::string::npos) {
+                            const std::string p = art_path_for_kind(m->second, "cartridges");
+                            const std::string k = m->second.slug + "#" + p;
+                            auto a = art.find(k);
+                            if (a != art.end()) disc_tex = a->second.tex;
+                            else if (art_asked.find(k) == art_asked.end() && !p.empty()) {
+                                art_asked.insert(k);
+                                art_pending[m->second.slug] = k;
+                                art_in_flight++;
+                                saturn::media_begin_artwork(m->second.slug, p);
+                            }
+                        }
+                    }
+
+                    if (disc_tex) {
+                        /* Four corners turned about the middle. ImGui has no
+                         * rotated image, but it has a quad, and a quad with
+                         * rotated corners is the same thing. */
+                        const float cs = cosf(spin), sn = sinf(spin);
+                        auto turn = [&](float dx, float dy) {
+                            return ImVec2(c.x + dx * cs - dy * sn,
+                                          c.y + dx * sn + dy * cs);
+                        };
+                        dl->AddImageQuad((ImTextureID)(intptr_t)disc_tex,
+                                         turn(-r, -r), turn(r, -r), turn(r, r), turn(-r, r),
+                                         ImVec2(0, 0), ImVec2(1, 0), ImVec2(1, 1), ImVec2(0, 1));
+                        dl->AddCircle(c, r * 0.99f, IM_COL32(150, 170, 200, 70), 48, 1.5f);
+                    } else {
+
                     dl->AddCircleFilled(c, r, IM_COL32(24, 27, 38, 255), 48);
                     /* The sheen: spokes of shifting hue, which is what a CD
                      * does under a light and what makes it read as a CD at
@@ -1650,6 +1841,7 @@ int main(int argc, char **argv)
                     dl->AddCircleFilled(c, r * 0.30f, IM_COL32(14, 16, 23, 255), 32);
                     dl->AddCircle(c, r * 0.30f, IM_COL32(150, 170, 200, 110), 32, 1.5f);
                     dl->AddCircleFilled(c, r * 0.12f, IM_COL32(9, 10, 15, 255), 24);
+                    }
                     ImGui::SameLine();
                 }
 
@@ -1792,6 +1984,23 @@ int main(int argc, char **argv)
                 ImGui::SameLine();
                 if (ImGui::Button("Rescan")) rescan();
                 ImGui::SameLine();
+                if (ImGui::Button(shelf_grid ? "List" : "Covers")) shelf_grid = !shelf_grid;
+                if (shelf_grid && !by_key.empty()) {
+                    ImGui::SameLine();
+                    ImGui::SetNextItemWidth(ImGui::CalcTextSize("Title screen").x +
+                                            ImGui::GetFrameHeight() * 1.6f);
+                    if (ImGui::BeginCombo("##artkind",
+                                          kArtLabel[std::clamp(cfg.machine.art_kind,
+                                                               0, kArtKinds - 1)])) {
+                        for (int k = 0; k < kArtKinds; ++k)
+                            if (ImGui::Selectable(kArtLabel[k], cfg.machine.art_kind == k)) {
+                                cfg.machine.art_kind = k;
+                                saturn::save_app_config(cfg_path, cfg);
+                            }
+                        ImGui::EndCombo();
+                    }
+                }
+                ImGui::SameLine();
                 TextDim("%zu game%s in %s", games.size(),
                         games.size() == 1 ? "" : "s",
                         cfg.disc_root.empty() ? "(no folder set)"
@@ -1823,6 +2032,49 @@ int main(int argc, char **argv)
                                    ".ccd files in the folder above -- one game per "
                                    "disc, and a game that came on several discs will "
                                    "be grouped back together by its name.");
+                } else if (shelf_grid) {
+                    /*
+                     * The shelf as covers.
+                     *
+                     * The pictures are the catalogue's, matched to the discs
+                     * by a normalised title -- so a signed-in account gets
+                     * artwork for games it already owns without downloading
+                     * anything. Without a match the card is a plate with the
+                     * name on it, which is still a shelf.
+                     */
+                    ImGui::BeginChild("##shelf");
+                    const float card_w = em * 9.0f;
+                    const float step = card_w + ImGui::GetStyle().ItemSpacing.x;
+                    const int per_row = std::max(1, (int)(ImGui::GetContentRegionAvail().x / step));
+                    int budget = 3;
+                    int shown = 0;
+                    for (size_t i = 0; i < games.size(); ++i) {
+                        const saturn::Game &g = games[i];
+                        if (search[0] && !SDL_strcasestr(g.title.c_str(), search))
+                            continue;
+                        if (disc_letter && title_initial(g.title) != disc_letter)
+                            continue;
+                        if (shown % per_row != 0) ImGui::SameLine();
+                        shown++;
+                        ImGui::PushID((int)i);
+
+                        std::string slug, preview;
+                        auto m = by_key.find(match_key(g.title));
+                        if (m != by_key.end()) {
+                            slug = m->second.slug;
+                            preview = art_path_for(m->second, cfg.machine.art_kind);
+                        }
+
+                        char sub[48];
+                        if (g.multi()) snprintf(sub, sizeof sub, "%zu discs", g.discs.size());
+                        else           snprintf(sub, sizeof sub, "%s",
+                                                (int)i == loaded_game_index ? "in the drive" : "");
+                        if (cover_card(slug.empty() ? g.title : slug, preview,
+                                       g.title, sub, card_w, &budget))
+                            insert_disc((int)i, 0);
+                        ImGui::PopID();
+                    }
+                    ImGui::EndChild();
                 } else {
                     ImGui::BeginChild("##list");
                     for (size_t i = 0; i < games.size(); ++i) {
@@ -1918,82 +2170,26 @@ int main(int argc, char **argv)
                 ImGui::BeginChild("##dl");
                 {
                     const float card_w = em * 9.0f;
-                    const float cover_h = card_w * 1.35f;
                     const float step = card_w + ImGui::GetStyle().ItemSpacing.x;
-                    const float wide = ImGui::GetContentRegionAvail().x;
-                    int per_row = std::max(1, (int)(wide / step));
-                    int budget = 3;          /* new requests allowed this frame */
+                    const int per_row = std::max(1, (int)(ImGui::GetContentRegionAvail().x / step));
+                    int budget = 3;          /* new art requests this frame */
 
                     for (size_t i = 0; i < catalogue.size(); ++i) {
                         const saturn::MediaGame &g = catalogue[i];
                         if ((int)(i % per_row) != 0) ImGui::SameLine();
                         ImGui::PushID((int)i);
+                        char sub[32];
+                        if (g.bytes > 0) snprintf(sub, sizeof sub, "%.0f MB",
+                                                  (double)g.bytes / 1048576.0);
+                        else             snprintf(sub, sizeof sub, "%d file%s",
+                                                  g.rom_files, g.rom_files == 1 ? "" : "s");
                         ImGui::BeginGroup();
-
-                        /* Ask for the art the first time this card is drawn,
-                         * and only while there is room in the queue. */
-                        auto it = art.find(g.slug);
-                        if (it == art.end() && budget > 0 && art_in_flight < 4 &&
-                            !g.preview.empty() &&
-                            art_asked.find(g.slug) == art_asked.end()) {
-                            art_asked.insert(g.slug);
-                            art_in_flight++;
-                            budget--;
-                            saturn::media_begin_artwork(g.slug, g.preview);
-                        }
-
-                        const ImVec2 at = ImGui::GetCursorScreenPos();
-                        if (it != art.end() && it->second.tex) {
-                            /* Fitted inside the cover box, whatever shape the
-                             * artwork turned out to be. */
-                            const Art &a = it->second;
-                            float w = card_w, h = w * (float)a.h / (float)a.w;
-                            if (h > cover_h) { h = cover_h; w = h * (float)a.w / (float)a.h; }
-                            ImGui::Dummy(ImVec2(card_w, cover_h));
-                            ImGui::GetWindowDrawList()->AddImage(
-                                (ImTextureID)(intptr_t)a.tex,
-                                ImVec2(at.x + (card_w - w) * 0.5f,
-                                       at.y + (cover_h - h) * 0.5f),
-                                ImVec2(at.x + (card_w + w) * 0.5f,
-                                       at.y + (cover_h + h) * 0.5f));
-                        } else {
-                            /* A plate where the cover will be, so the grid
-                             * does not reflow as art arrives. */
-                            ImGui::Dummy(ImVec2(card_w, cover_h));
-                            ImDrawList *dl = ImGui::GetWindowDrawList();
-                            dl->AddRectFilled(at, ImVec2(at.x + card_w, at.y + cover_h),
-                                              IM_COL32(28, 32, 44, 255), 4.0f);
-                            dl->AddRect(at, ImVec2(at.x + card_w, at.y + cover_h),
-                                        IM_COL32(60, 70, 92, 255), 4.0f);
-                        }
-
-                        /*
-                         * The title in a box of a fixed two lines.
-                         *
-                         * Left to wrap freely, a three-line title made its
-                         * card taller than its neighbours, and since a row is
-                         * as tall as its tallest card the whole grid went
-                         * ragged and the Download buttons stopped lining up.
-                         * Two lines is enough for nearly everything and the
-                         * rest is elided rather than allowed to push.
-                         */
-                        ImGui::BeginChild((std::string("t") + std::to_string(i)).c_str(),
-                                          ImVec2(card_w, ImGui::GetTextLineHeight() * 2.2f));
-                        ImGui::PushTextWrapPos(card_w);
-                        ImGui::TextUnformatted(g.title.c_str());
-                        ImGui::PopTextWrapPos();
-                        if (ImGui::IsWindowHovered()) ImGui::SetTooltip("%s", g.title.c_str());
-                        ImGui::EndChild();
-
-                        if (g.bytes > 0) TextDim("%.0f MB", (double)g.bytes / 1048576.0);
-                        else             TextDim("%d file%s", g.rom_files,
-                                                 g.rom_files == 1 ? "" : "s");
-
+                        cover_card(g.slug, art_path_for(g, cfg.machine.art_kind),
+                                   g.title, sub, card_w, &budget);
                         ImGui::BeginDisabled(!prog.empty() || cfg.disc_root.empty());
                         if (ImGui::Button("Download", ImVec2(card_w, 0)))
                             saturn::media_begin_download(g.slug, cfg.disc_root);
                         ImGui::EndDisabled();
-
                         ImGui::EndGroup();
                         ImGui::PopID();
                     }
@@ -2720,14 +2916,29 @@ int main(int argc, char **argv)
                     /* The password is not kept a moment longer than the
                      * request that used it. */
                     SDL_memset(media_pass, 0, sizeof media_pass);
-                    if (account.signed_in && account.is_admin) refresh_catalogue();
+                    /* Cover art is free and unmetered for any signed-in
+                     * account; only downloading needs an administrator. So the
+                     * catalogue is fetched for anybody who signs in. */
+                    if (account.signed_in)
+                        saturn::media_begin_catalogue("", "", account.is_admin);
                     break;
                 case saturn::MediaOp::Catalogue:
-                    if (mr.ok) catalogue = mr.games;
+                    if (mr.ok) {
+                        catalogue = mr.games;
+                        /* The first, unfiltered answer is the one worth
+                         * keeping for the shelf. */
+                        if (!have_full_catalogue) {
+                            have_full_catalogue = true;
+                            for (const saturn::MediaGame &g : mr.games)
+                                by_key[match_key(g.title)] = g;
+                        }
+                    }
                     break;
                 case saturn::MediaOp::Artwork: {
                     if (art_in_flight > 0) art_in_flight--;
                     if (!mr.ok) break;
+                    /* The reply names the game; which picture it was comes
+                     * back in the path we asked with. */
                     int w = 0, h = 0;
                     std::vector<unsigned char> rgba;
                     if (!saturn::media_read_art(mr.art.path, w, h, rgba)) break;
@@ -2737,7 +2948,8 @@ int main(int argc, char **argv)
                     SDL_SetTextureBlendMode(t, SDL_BLENDMODE_BLEND);
                     SDL_SetTextureScaleMode(t, SDL_SCALEMODE_LINEAR);
                     SDL_UpdateTexture(t, nullptr, rgba.data(), w * 4);
-                    Art &a = art[mr.art.slug];
+                    Art &a = art[art_pending.count(mr.art.slug)
+                                 ? art_pending[mr.art.slug] : mr.art.slug];
                     if (a.tex) SDL_DestroyTexture(a.tex);
                     a.tex = t; a.w = w; a.h = h;
                     break;

@@ -107,6 +107,18 @@ struct Settings {
      * display where the border matters more than the geometry. */
     int  aspect = 0;
 
+    /*
+     * Which picture to put on a card.
+     *
+     * The catalogue keeps several of each game -- the title screen, the front
+     * and back of the box, the arcade marquee, the disc itself -- and which
+     * one makes the better shelf is a matter of taste and of what the
+     * catalogue actually has for the games you own.
+     *
+     *   0 title screen   1 box, front   2 box, back   3 marquee
+     */
+    int  art_kind = 1;
+
     /* Crosshair size, as a percentage of a sensible default. A light gun
      * pointer has to be found on a busy screen in a hurry, and how big that
      * needs to be depends on the screen and the eyes, so it is a setting. */
@@ -130,7 +142,7 @@ struct Settings {
                audio_muted == o.audio_muted &&
                cd_read_speed == o.cd_read_speed && cdblock_lle == o.cdblock_lle && rtc_mode == o.rtc_mode && scaling == o.scaling &&
                integer_scale == o.integer_scale && aspect == o.aspect &&
-               crosshair == o.crosshair &&
+               crosshair == o.crosshair && art_kind == o.art_kind &&
                port1 == o.port1 && port2 == o.port2;
     }
 };
