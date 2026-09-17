@@ -103,6 +103,7 @@ bool load_app_config(const std::string &path, AppConfig &out)
     out.disc_root   = str_of(kv, "disc_root", out.disc_root);
     out.bios_path   = str_of(kv, "bios_path", out.bios_path);
     out.saves_dir   = str_of(kv, "saves_dir", out.saves_dir);
+    out.disc_tree   = str_of(kv, "disc_tree", out.disc_tree);
     out.wizard_done = bool_of(kv, "wizard_done", false);
 
     Settings &s = out.machine;
@@ -140,6 +141,7 @@ bool save_app_config(const std::string &path, const AppConfig &cfg)
     t += "disc_root=" + cfg.disc_root + "\n";
     t += "bios_path=" + cfg.bios_path + "\n";
     t += "saves_dir=" + cfg.saves_dir + "\n";
+    t += "disc_tree=" + cfg.disc_tree + "\n";
     t += "wizard_done="; t += cfg.wizard_done ? "1" : "0"; t += "\n";
     t += "region_auto="; t += s.region_auto ? "1" : "0"; t += "\n";
     t += "video_standard=" + std::to_string(s.video_standard) + "\n";

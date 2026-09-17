@@ -66,6 +66,16 @@ std::vector<std::string> candidate_disc_roots();
  * access to all files.
  */
 void begin_pick_folder();
+
+/** Whether the system can pick at all. Android's SDL backend answers
+ *  SDL_Unsupported for folders and returns content:// URIs for files, neither
+ *  of which is a path an emulator can open -- so the UI offers a different
+ *  route there rather than a button that does nothing. */
+bool pickers_usable();
+
+/** A Saturn BIOS sitting in the discs folder, if there is one: 512 KiB, and
+ *  named like a BIOS. Empty when nothing there looks right. */
+std::string find_bios_in(const std::string &dir);
 void begin_pick_file();
 
 /* True while a dialog is open, so the caller can disable the button that

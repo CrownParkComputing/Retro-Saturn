@@ -1,5 +1,7 @@
 package com.crownpark.retro_saturn
 
+import android.app.Activity
+import android.content.Intent
 import android.os.Bundle
 import org.libsdl.app.SDLActivity
 import java.io.File
@@ -32,9 +34,77 @@ class MainActivity : SDLActivity() {
      *  where the desktop build could not use it. */
     override fun getArguments(): Array<String> = arrayOf()
 
+    companion object {
+        private const val REQ_PICK_FOLDER = 0x5A70
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
+        SafBridge.activity = this
         unpackAssets()
+        writeCandidateRoots()
         super.onCreate(savedInstanceState)
+    }
+
+    override fun onDestroy() {
+        SafBridge.activity = null
+        super.onDestroy()
+    }
+
+    /**
+     * The system folder picker.
+     *
+     * Called from SafBridge on the UI thread. The old
+     * startActivityForResult/onActivityResult pair rather than a modern
+     * ActivityResultLauncher, because SDLActivity extends plain
+     * android.app.Activity and registerForActivityResult does not exist here.
+     */
+    fun launchFolderPicker() {
+        val i = Intent(Intent.ACTION_OPEN_DOCUMENT_TREE).apply {
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or
+                     Intent.FLAG_GRANT_WRITE_URI_PERMISSION or
+                     Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION)
+        }
+        startActivityForResult(i, REQ_PICK_FOLDER)
+    }
+
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        if (requestCode == REQ_PICK_FOLDER) {
+            if (resultCode == Activity.RESULT_OK) data?.data?.let { SafBridge.onPicked(it) }
+            return
+        }
+        super.onActivityResult(requestCode, resultCode, data)
+    }
+
+    /**
+     * Where discs can live, written out for the native side to read.
+     *
+     * Android has not handed out general storage for years: a folder chosen in
+     * the system picker comes back as a content:// URI, which is not a path
+     * and cannot be opened by an emulator that mounts a file. Copying is the
+     * usual answer and it is the wrong one here -- a Saturn disc is a third of
+     * a gigabyte and a shelf of them is tens.
+     *
+     * The app's own external directories need no permission, ARE real paths,
+     * and a file manager or a USB cable can reach them. getExternalFilesDirs
+     * returns one per volume, so this finds the SD card as well as internal
+     * storage, which is where a library of this size actually wants to be.
+     *
+     * A file rather than a JNI call because it is read once at startup and
+     * never changes: a text file needs no bridge, no thread rules and no
+     * lifetime to get wrong.
+     */
+    private fun writeCandidateRoots() {
+        try {
+            val roots = getExternalFilesDirs(null)
+                .filterNotNull()
+                .map { File(it, "Saturn") }
+            for (r in roots) r.mkdirs()
+            File(filesDir, "roots.txt")
+                .writeText(roots.joinToString("\n") { it.absolutePath })
+        } catch (_: Exception) {
+            /* Without it the frontend falls back to its own guess, which is
+             * the primary volume -- a worse list, not a broken app. */
+        }
     }
 
     /**
@@ -49,7 +119,18 @@ class MainActivity : SDLActivity() {
     private fun unpackAssets() {
         val base = filesDir
         for (dir in arrayOf("assets", "demo")) {
-            val names = try { assets.list(dir) ?: continue } catch (_: Exception) { continue }
+            val names = try { assets.list(dir) ?: emptyArray() } catch (_: Exception) { emptyArray() }
+            if (names.isEmpty()) {
+                /*
+                 * Nothing packaged under this name, so nothing should be left
+                 * unpacked under it either. The demo disc was bundled once and
+                 * is not any more; without this, an install that had the old
+                 * build keeps the 83MB file for ever and the app goes on
+                 * offering a demo that new installs do not have.
+                 */
+                File(base, dir).deleteRecursively()
+                continue
+            }
             val out = File(base, dir).apply { mkdirs() }
             for (name in names) {
                 val dst = File(out, name)

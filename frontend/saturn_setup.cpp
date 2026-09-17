@@ -56,13 +56,44 @@ std::vector<std::string> candidate_disc_roots()
     std::vector<std::string> out;
 #if defined(__ANDROID__)
     /*
-     * The app's OWN external directory, which needs no permission and no
-     * grant: Android gives every app one of these and lets a file manager or
-     * a USB cable reach it. It is the only folder this app can rely on, so it
-     * is offered first and by name.
+     * The app's OWN external directories, which need no permission and no
+     * grant: Android gives every app one per storage volume and lets a file
+     * manager or a USB cable reach them. They are the only folders this app
+     * can rely on, and crucially they are real paths -- a folder chosen in the
+     * system picker is a content:// URI, which an emulator that mounts a file
+     * cannot open at all.
+     *
+     * MainActivity writes the list, because only Java can ask for it and the
+     * SD card is the one most people want for a library this size. SDL knows
+     * about the primary volume only, so it is the fallback rather than the
+     * answer.
      */
-    if (const char *ext = SDL_GetAndroidExternalStoragePath())
-        out.push_back(std::string(ext) + "/Saturn");
+    if (const char *internal = SDL_GetAndroidInternalStoragePath()) {
+        const std::string list = std::string(internal) + "/roots.txt";
+        if (SDL_IOStream *in = SDL_IOFromFile(list.c_str(), "rb")) {
+            const Sint64 size = SDL_GetIOSize(in);
+            if (size > 0 && size < 8192) {
+                std::string text((size_t)size, '\0');
+                if (SDL_ReadIO(in, text.data(), text.size()) == text.size()) {
+                    size_t pos = 0;
+                    while (pos < text.size()) {
+                        size_t eol = text.find('\n', pos);
+                        if (eol == std::string::npos) eol = text.size();
+                        std::string line = text.substr(pos, eol - pos);
+                        pos = eol + 1;
+                        while (!line.empty() && (line.back() == '\r' || line.back() == ' '))
+                            line.pop_back();
+                        if (!line.empty()) out.push_back(line);
+                    }
+                }
+            }
+            SDL_CloseIO(in);
+        }
+    }
+    if (out.empty()) {
+        if (const char *ext = SDL_GetAndroidExternalStoragePath())
+            out.push_back(std::string(ext) + "/Saturn");
+    }
 #elif defined(__APPLE__)
     /* Documents, because that is the one the Files app shows. */
     if (const char *docs = SDL_GetUserFolder(SDL_FOLDER_DOCUMENTS))
@@ -109,6 +140,59 @@ void pick_cb(void *, const char *const *filelist, int)
 }
 
 } /* namespace */
+
+bool pickers_usable()
+{
+#if defined(__ANDROID__)
+    /*
+     * No.
+     *
+     * SDL's Android dialog backend answers SDL_Unsupported() for a folder, and
+     * for a file it returns the content:// URI the system picker produced.
+     * Neither is something fopen() can take, so a "Browse..." button there is
+     * a button that appears to do nothing -- which is worse than not offering
+     * one and saying where files should go instead.
+     */
+    return false;
+#else
+    return true;
+#endif
+}
+
+/*
+ * A BIOS found rather than chosen.
+ *
+ * With no usable picker on Android, the way in is to put the file in the discs
+ * folder like everything else -- so look for it there. 512 KiB exactly is the
+ * strong signal: that is the size of every Saturn IPL and almost nothing else
+ * in a folder of disc images is that size to the byte.
+ */
+std::string find_bios_in(const std::string &dir)
+{
+    if (dir.empty()) return std::string();
+    int n = 0;
+    char **found = SDL_GlobDirectory(dir.c_str(), nullptr,
+                                     SDL_GLOB_CASEINSENSITIVE, &n);
+    if (!found) return std::string();
+
+    std::string best;
+    for (int i = 0; i < n && found[i]; ++i) {
+        const std::string name = found[i];
+        if (name.find('/') != std::string::npos) continue;
+        const std::string full = dir + "/" + name;
+        SDL_PathInfo info;
+        if (!SDL_GetPathInfo(full.c_str(), &info)) continue;
+        if (info.type != SDL_PATHTYPE_FILE) continue;
+        if (info.size != 512 * 1024) continue;
+        /* Prefer one that says what it is, but take any 512 KiB file: people
+         * name their dumps all sorts of things. */
+        if (SDL_strcasestr(name.c_str(), "bios") ||
+            SDL_strcasestr(name.c_str(), "ipl")) { best = full; break; }
+        if (best.empty()) best = full;
+    }
+    SDL_free(found);
+    return best;
+}
 
 bool pick_in_progress() { return g_pick.open; }
 

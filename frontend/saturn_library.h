@@ -21,6 +21,9 @@ namespace saturn {
 
 /* One disc image on disk. */
 struct Disc {
+    /* Non-empty when this disc lives in a granted document tree rather than
+     * on a path. `path` is then empty until it has been staged. */
+    std::string tree;
     std::string path;      /* what goes to the bridge                        */
     std::string file;      /* the file's own name, for when the title is bare */
     int         number = 0; /* 1-based disc number, 0 when the name says none */
@@ -46,6 +49,16 @@ struct Game {
  * -- into library entries of their own.
  */
 std::vector<Game> scan_discs(const std::string &root);
+
+/*
+ * The same, for a folder Android granted rather than one with a path.
+ *
+ * `tree` is the content:// handle and `sub` the folder inside it, usually
+ * "cd". The discs come back with `path` EMPTY and `tree`/`file` set, because
+ * there is no path until one is staged -- which happens when a disc is
+ * actually started, not when the shelf is drawn.
+ */
+std::vector<Game> scan_discs_saf(const std::string &tree, const std::string &sub);
 
 /*
  * The disc number a filename declares, and the title with that declaration

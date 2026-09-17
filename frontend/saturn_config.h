@@ -171,6 +171,16 @@ struct AppConfig {
      */
     std::string saves_dir;
 
+    /*
+     * A folder Android granted, when the discs live in one.
+     *
+     * Empty everywhere else, and empty on Android too when the discs are in
+     * one of the app's own directories -- those have real paths and need no
+     * grant. Held as the content:// tree handle, which is the only durable
+     * name such a folder has.
+     */
+    std::string disc_tree;
+
     bool wizard_done = false;
     Settings machine;
 };

@@ -1,4 +1,5 @@
 #include "saturn_library.h"
+#include "saturn_saf.h"
 
 #include <SDL3/SDL.h>
 
@@ -117,6 +118,44 @@ int disc_number_of(const std::string &filename, std::string &title)
 
     title = trim(base);
     return 0;
+}
+
+std::vector<Game> scan_discs_saf(const std::string &tree, const std::string &sub)
+{
+    std::vector<Game> games;
+    if (tree.empty()) return games;
+
+    std::map<std::string, Game> byTitle;
+    for (const SafEntry &e : saf_list(tree, sub)) {
+        if (!is_disc_image(e.name)) continue;
+
+        std::string title;
+        const int number = disc_number_of(e.name, title);
+        if (title.empty()) title = e.name;
+
+        Disc d;
+        d.tree   = tree;
+        d.file   = e.name;
+        d.number = number;
+        /* d.path stays empty: there is no path until it is staged. */
+
+        Game &g = byTitle[title];
+        g.title = title;
+        g.discs.push_back(std::move(d));
+    }
+
+    for (auto &kv : byTitle) {
+        Game &g = kv.second;
+        std::sort(g.discs.begin(), g.discs.end(),
+                  [](const Disc &a, const Disc &b) {
+                      if (a.number != b.number) return a.number < b.number;
+                      return a.file < b.file;
+                  });
+        games.push_back(std::move(g));
+    }
+    std::sort(games.begin(), games.end(),
+              [](const Game &a, const Game &b) { return a.title < b.title; });
+    return games;
 }
 
 std::vector<Game> scan_discs(const std::string &root)
