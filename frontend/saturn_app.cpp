@@ -29,6 +29,21 @@
 #include "saturn_library.h"
 #include "saturn_setup.h"
 
+/* Stamped in by the build script; sensible if it was not. */
+#ifndef SATURN_CORE_VERSION
+#  define SATURN_CORE_VERSION "unknown"
+#endif
+#ifndef SATURN_CORE_DESC
+#  define SATURN_CORE_DESC "unknown"
+#endif
+#ifndef SATURN_CORE_DATE
+#  define SATURN_CORE_DATE "unknown"
+#endif
+
+#define STB_IMAGE_IMPLEMENTATION
+#define STBI_ONLY_PNG
+#include "stb_image.h"
+
 #include <SDL3/SDL.h>
 
 #include "imgui.h"
@@ -41,6 +56,7 @@ extern "C" {
 
 #include <cstdarg>
 #include <cstdio>
+#include <algorithm>
 #include <cstring>
 #include <string>
 #include <vector>
@@ -127,6 +143,35 @@ void apply_style()
     c[ImGuiCol_SliderGrab]      = amber;
     c[ImGuiCol_SliderGrabActive]= ImVec4(1.00f, 0.72f, 0.26f, 1.00f);
     c[ImGuiCol_TitleBgActive]   = panel;
+}
+
+/*
+ * A PNG, as a texture.
+ *
+ * SDL3 has no image decoder of its own and this app links no SDL_image, but
+ * the core already vendors stb_image for its own use -- so the wordmark costs
+ * one header rather than a dependency. Null on any failure, which every caller
+ * here treats as "draw the name instead".
+ */
+SDL_Texture *load_png(SDL_Renderer *ren, const char *path, int *out_w, int *out_h)
+{
+    int w = 0, h = 0, comp = 0;
+    stbi_uc *px = stbi_load(path, &w, &h, &comp, 4);
+    if (!px) return nullptr;
+
+    SDL_Texture *t = SDL_CreateTexture(ren, SDL_PIXELFORMAT_RGBA32,
+                                       SDL_TEXTUREACCESS_STATIC, w, h);
+    if (t) {
+        SDL_UpdateTexture(t, nullptr, px, w * 4);
+        /* Drawn smaller than it was authored, so filtered -- the opposite of
+         * the emulator's framebuffer, which is hard pixels. */
+        SDL_SetTextureScaleMode(t, SDL_SCALEMODE_LINEAR);
+        SDL_SetTextureBlendMode(t, SDL_BLENDMODE_BLEND);
+        if (out_w) *out_w = w;
+        if (out_h) *out_h = h;
+    }
+    stbi_image_free(px);
+    return t;
 }
 
 /* Which of the console's faces is showing. Horizontal, and short: a Saturn
@@ -285,6 +330,7 @@ int main(int argc, char **argv)
                                     s.audio_interpolation);
         ymir_bridge_set_core_option(ymir, YMIR_OPT_CD_READ_SPEED, s.cd_read_speed);
         ymir_bridge_set_core_option(ymir, YMIR_OPT_CDBLOCK_LLE, s.cdblock_lle);
+        ymir_bridge_set_core_option(ymir, YMIR_OPT_RTC_MODE, s.rtc_mode);
     };
     auto apply_ports = [&] {
         ymir_bridge_set_peripheral_type(ymir, 1, (YmirPeripheralType)cfg.machine.port1);
@@ -387,6 +433,18 @@ int main(int argc, char **argv)
     /* Trigger state, so a crossing of the threshold is sent once rather than
      * every frame the trigger is held. */
     bool trigger_held[2][2] = {{false, false}, {false, false}};
+
+    /* ---- the wordmark ----
+     *
+     * Loaded once, from beside the binary. A missing one is not an error: the
+     * app draws its name as text and carries on, because an asset that failed
+     * to package should make it look plainer, never stop it starting. */
+    SDL_Texture *logo = nullptr;
+    int logo_w = 0, logo_h = 0;
+    if (const char *base = SDL_GetBasePath()) {
+        logo = load_png(ren, (std::string(base) + "assets/wordmark.png").c_str(),
+                        &logo_w, &logo_h);
+    }
 
     /* ---- the picture ---- */
     SDL_Texture *frame = nullptr;
@@ -840,6 +898,19 @@ int main(int argc, char **argv)
             const float cw = ImGui::GetContentRegionAvail().x;
             const float fs = ImGui::GetFontSize();
 
+            /* The wordmark, sized to the window and never wider than a
+             * third of it: this is a shelf, not a title screen. */
+            if (logo && logo_w > 0) {
+                const float want = ImGui::GetFontSize() * 7.0f;
+                const float w = std::min(want * (float)logo_w / (float)logo_h,
+                                         cw * 0.42f);
+                const float h = w * (float)logo_h / (float)logo_w;
+                ImGui::Image((ImTextureID)(intptr_t)logo, ImVec2(w, h));
+            } else {
+                ImGui::TextUnformatted("RETRO-SATURN");
+            }
+            ImGui::Spacing();
+
             /* ============ the drive, across the top ============ */
             /* Sized from what is in it, not guessed: three lines of text, a
              * row of buttons, and the padding around them. The first version
@@ -1067,6 +1138,32 @@ int main(int argc, char **argv)
                 dirty |= ImGui::Checkbox("Low-level CD block (slower, reads more discs)",
                                          &s.cdblock_lle);
 
+                ImGui::Spacing(); ImGui::Separator(); ImGui::Spacing();
+                ImGui::TextUnformatted("Sound");
+                {
+                    /* Linear is what the SCSP does, which makes the accurate
+                     * option the one that sounds like an enhancement. */
+                    int interp = s.audio_interpolation;
+                    dirty |= ImGui::RadioButton("Linear (as the hardware)", &interp, 1);
+                    ImGui::SameLine();
+                    dirty |= ImGui::RadioButton("Nearest (harsher, older sound)",
+                                                &interp, 0);
+                    s.audio_interpolation = interp;
+                }
+
+                ImGui::Spacing(); ImGui::Separator(); ImGui::Spacing();
+                ImGui::TextUnformatted("Clock");
+                {
+                    int m = s.rtc_mode;
+                    dirty |= ImGui::RadioButton("Follow this device's clock", &m, 0);
+                    ImGui::SameLine();
+                    dirty |= ImGui::RadioButton("Emulate the Saturn's own", &m, 1);
+                    s.rtc_mode = m;
+                }
+                TextDimWrapped("Following the device's clock is why the Saturn knows "
+                               "the date without ever being told. Emulating its own "
+                               "is for a run that has to come out the same twice.");
+
                 if (dirty) {
                     apply_options();
                     saturn::save_app_config(cfg_path, cfg);
@@ -1079,6 +1176,12 @@ int main(int argc, char **argv)
                                "not ours.");
                 ImGui::Spacing();
                 ImGui::TextUnformatted("Ymir");
+                ImGui::Text("version %s", SATURN_CORE_VERSION);
+                /* The date the core was last refreshed from upstream, so
+                 * "are we behind?" is answerable from inside the app rather
+                 * than by reading a submodule pointer. */
+                TextDim("%s, refreshed %s", SATURN_CORE_DESC, SATURN_CORE_DATE);
+                ImGui::Spacing();
                 TextDimWrapped("github.com/StrikerX3/Ymir -- GNU GPL v3 or later. The "
                                "exact source this ships is at "
                                "github.com/CrownParkComputing/ymir.");
@@ -1212,6 +1315,7 @@ int main(int argc, char **argv)
     /* The clock and the language, so the BIOS does not ask again. */
     ymir_bridge_save_smpc_state(ymir, smpc_path.c_str());
     if (frame) SDL_DestroyTexture(frame);
+    if (logo) SDL_DestroyTexture(logo);
     for (SDL_Gamepad *g : pads) if (g) SDL_CloseGamepad(g);
     ymir_bridge_destroy(ymir);
     ImGui_ImplSDLRenderer3_Shutdown();

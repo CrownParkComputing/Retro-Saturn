@@ -117,6 +117,7 @@ bool load_app_config(const std::string &path, AppConfig &out)
     s.cd_read_speed        = int_of(kv, "cd_read_speed", s.cd_read_speed);
     if (s.cd_read_speed < 2 || s.cd_read_speed > 200) s.cd_read_speed = 2;
     s.cdblock_lle          = bool_of(kv, "cdblock_lle", s.cdblock_lle);
+    s.rtc_mode             = int_of(kv, "rtc_mode", s.rtc_mode) ? 1 : 0;
     s.port1                = peripheral_of(kv, "port1", s.port1);
     s.port2                = peripheral_of(kv, "port2", s.port2);
     return true;
@@ -139,6 +140,7 @@ bool save_app_config(const std::string &path, const AppConfig &cfg)
     t += "audio_interpolation=" + std::to_string(s.audio_interpolation) + "\n";
     t += "cd_read_speed=" + std::to_string(s.cd_read_speed) + "\n";
     t += "cdblock_lle="; t += s.cdblock_lle ? "1" : "0"; t += "\n";
+    t += "rtc_mode=" + std::to_string(s.rtc_mode) + "\n";
     t += "port1=" + std::to_string((int)s.port1) + "\n";
     t += "port2=" + std::to_string((int)s.port2) + "\n";
     return write_file(path, t);

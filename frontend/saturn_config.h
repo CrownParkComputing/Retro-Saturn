@@ -71,6 +71,11 @@ struct Settings {
      * high-level path cannot read. */
     bool cdblock_lle = false;
 
+    /* The clock. 0 follows the host's, which is why the Saturn knows what
+     * time it is without ever being told; 1 emulates the RTC from the bus
+     * clock, which is what a run that must be reproducible needs. */
+    int  rtc_mode = 0;
+
     /* ---- the ports ----
      *
      * Two of them, because the console has two, and they are not a setting
@@ -86,7 +91,7 @@ struct Settings {
                threaded_vdp2 == o.threaded_vdp2 &&
                threaded_deinterlace == o.threaded_deinterlace &&
                audio_interpolation == o.audio_interpolation &&
-               cd_read_speed == o.cd_read_speed && cdblock_lle == o.cdblock_lle &&
+               cd_read_speed == o.cd_read_speed && cdblock_lle == o.cdblock_lle && rtc_mode == o.rtc_mode &&
                port1 == o.port1 && port2 == o.port2;
     }
 };
