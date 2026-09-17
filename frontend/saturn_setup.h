@@ -76,6 +76,17 @@ bool pickers_usable();
 /** A Saturn BIOS sitting in the discs folder, if there is one: 512 KiB, and
  *  named like a BIOS. Empty when nothing there looks right. */
 std::string find_bios_in(const std::string &dir);
+
+/*
+ * The folder inside `root` that plainly holds `kind`, whatever it is called.
+ *
+ * People have had these libraries for years and they are not named what this
+ * app would have named them: a folder of Saturn discs is as likely to be
+ * "Games" or "roms" as "cd", and "BIOS" is almost never "bios". Returns the
+ * path of an existing one, or `root + "/" + kind` when there is none -- which
+ * is then the one to create.
+ */
+std::string folder_for(const std::string &root, const std::string &kind);
 void begin_pick_file();
 
 /* True while a dialog is open, so the caller can disable the button that

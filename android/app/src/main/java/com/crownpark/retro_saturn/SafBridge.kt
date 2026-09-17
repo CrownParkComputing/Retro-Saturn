@@ -122,12 +122,55 @@ object SafBridge {
     }
 
     /**
-     * Make `bios`, `cd` and `saves` inside a granted tree, unless they are
-     * already there.
+     * What each of our three folders may already be called.
      *
-     * Somewhere obvious to put things beats a folder that works but that
-     * nobody can guess the shape of. Existing folders are left exactly as
-     * they are -- this creates, it never tidies.
+     * People have had these libraries for years and they are not called what
+     * this app would have called them: a folder of Saturn discs is as likely
+     * to be "Games" or "roms" as "cd", and "BIOS" is almost never "bios".
+     * Creating our own names beside theirs would leave two empty folders and a
+     * library the app cannot see, so an existing one under any of these names
+     * is used as it stands.
+     *
+     * Case-insensitively, because "BIOS" and "bios" are the same folder to
+     * every person who has ever looked at one.
+     */
+    private val ALIASES = mapOf(
+        "bios"  to listOf("bios", "bios roms", "system"),
+        "cd"    to listOf("cd", "cds", "games", "roms", "discs", "disks", "iso", "isos"),
+        "saves" to listOf("saves", "save", "saveram", "savedata", "backup"),
+    )
+
+    /**
+     * An existing child folder matching any alias for `kind`, or null.
+     *
+     * The one with something in it wins. Order alone is not enough: this app
+     * creates "cd" when it finds nothing, and an empty "cd" from an earlier
+     * run would otherwise beat the "Games" folder holding the whole library,
+     * for ever, because it exists and comes first in the list.
+     */
+    private fun findFolder(root: DocumentFile, kind: String): DocumentFile? {
+        val want = ALIASES[kind] ?: listOf(kind)
+        val children = try { root.listFiles() } catch (_: Exception) { return null }
+        var firstExisting: DocumentFile? = null
+        for (alias in want) {
+            for (f in children) {
+                if (!f.isDirectory) continue
+                if (f.name?.equals(alias, ignoreCase = true) != true) continue
+                if (firstExisting == null) firstExisting = f
+                val inside = try { f.listFiles() } catch (_: Exception) { emptyArray() }
+                if (inside.isNotEmpty()) return f
+            }
+        }
+        return firstExisting
+    }
+
+    /**
+     * Make `bios`, `cd` and `saves` inside a granted tree, unless something
+     * that plainly IS one of them is already there.
+     *
+     * Somewhere obvious to put things beats a folder that works but whose
+     * shape nobody can guess. Existing folders are left exactly as they are --
+     * this creates, it never renames, moves or tidies.
      */
     @JvmStatic
     fun ensureLayout(treeUri: String): Boolean {
@@ -135,10 +178,19 @@ object SafBridge {
         val root = try { DocumentFile.fromTreeUri(c, Uri.parse(treeUri)) } catch (_: Exception) { null }
             ?: return false
         if (!root.canWrite()) return false
-        for (name in arrayOf("bios", "cd", "saves")) {
-            if (root.findFile(name) == null) root.createDirectory(name)
+        for (kind in ALIASES.keys) {
+            if (findFolder(root, kind) == null) root.createDirectory(kind)
         }
         return true
+    }
+
+    /** What `kind` is actually called inside this tree, for showing a person. */
+    @JvmStatic
+    fun folderName(treeUri: String, kind: String): String {
+        val c = ctx() ?: return kind
+        val root = try { DocumentFile.fromTreeUri(c, Uri.parse(treeUri)) } catch (_: Exception) { null }
+            ?: return kind
+        return findFolder(root, kind)?.name ?: kind
     }
 
     /* ------------------------------------------------------------------ */
@@ -156,7 +208,7 @@ object SafBridge {
         val c = ctx() ?: return ""
         var dir = try { DocumentFile.fromTreeUri(c, Uri.parse(treeUri)) } catch (_: Exception) { null }
             ?: return ""
-        if (sub.isNotEmpty()) dir = dir.findFile(sub) ?: return ""
+        if (sub.isNotEmpty()) dir = findFolder(dir, sub) ?: return ""
         val out = StringBuilder()
         for (f in dir.listFiles()) {
             if (f.isDirectory) continue
@@ -185,7 +237,7 @@ object SafBridge {
         val c = ctx() ?: return ""
         var dir = try { DocumentFile.fromTreeUri(c, Uri.parse(treeUri)) } catch (_: Exception) { null }
             ?: return ""
-        if (sub.isNotEmpty()) dir = dir.findFile(sub) ?: return ""
+        if (sub.isNotEmpty()) dir = findFolder(dir, sub) ?: return ""
         val src = dir.findFile(name) ?: return ""
         val want = src.length()
 
@@ -222,12 +274,20 @@ object SafBridge {
     }
 
     /**
-     * The real path of a tree, when it happens to have one.
+     * The real path of a granted tree, when it genuinely has a usable one.
      *
-     * A tree inside the app's own external storage needs no copying at all --
-     * the app can already read it by path. Recognising that is the difference
-     * between starting a 300 MB disc instantly and waiting for it to be
-     * duplicated onto the same device it is already on.
+     * A tree INSIDE the app's own external storage can be read by path, so
+     * there is no reason to copy anything out of it -- that would be
+     * duplicating a file onto the device it is already on. Anywhere else, a
+     * grant is a permission and not a path, and answering with a path that
+     * cannot be opened is worse than answering with nothing.
+     *
+     * Two things the first version of this got wrong and which are the whole
+     * of the check below: "primary" means internal storage and nothing else,
+     * and a candidate only counts if it lies under the app's own directory.
+     * Without either, a folder on internal storage resolved to a lookalike on
+     * the memory card, and one outside the sandbox resolved to a path the app
+     * is not allowed to read.
      */
     @JvmStatic
     fun realPath(treeUri: String): String {
@@ -235,20 +295,30 @@ object SafBridge {
         val id = try {
             DocumentsContract.getTreeDocumentId(Uri.parse(treeUri))
         } catch (_: Exception) { return "" }
-        /* "primary:Some/Folder" or "FEDD-B1FF:Some/Folder" */
         val colon = id.indexOf(':')
         if (colon < 0) return ""
-        val volume = id.substring(0, colon)
+        val volume = id.substring(0, colon)          // "primary" or "FEDD-B1FF"
         val rel = id.substring(colon + 1)
-        val bases = c.getExternalFilesDirs(null).filterNotNull()
-        for (b in bases) {
-            /* .../Android/data/<pkg>/files -> the volume root is five up */
-            val root = b.parentFile?.parentFile?.parentFile?.parentFile ?: continue
+
+        for (base in c.getExternalFilesDirs(null).filterNotNull()) {
+            /* .../<volume>/Android/data/<pkg>/files -> four up is the volume */
+            val root = base.parentFile?.parentFile?.parentFile?.parentFile ?: continue
+            val isPrimary = root.absolutePath.startsWith("/storage/emulated")
+            if ((volume == "primary") != isPrimary) continue
+
             val candidate = File(root, rel)
+            /*
+             * Tested, not assumed.
+             *
+             * The rule would be "only inside the app's own directory", and on
+             * this hardware that rule is wrong: a folder on the memory card
+             * outside the sandbox lists perfectly well. Whether a path can be
+             * read is a question with an answer, so ask it -- listFiles()
+             * returning null is exactly the case a path must not be claimed
+             * for.
+             */
             if (candidate.isDirectory && candidate.canRead() &&
-                (volume == "primary" || root.absolutePath.contains(volume))) {
-                return candidate.absolutePath
-            }
+                candidate.listFiles() != null) return candidate.absolutePath
         }
         return ""
     }

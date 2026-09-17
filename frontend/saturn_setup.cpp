@@ -1,4 +1,5 @@
 #include "saturn_setup.h"
+#include "saturn_library.h"
 
 #include <SDL3/SDL.h>
 
@@ -140,6 +141,54 @@ void pick_cb(void *, const char *const *filelist, int)
 }
 
 } /* namespace */
+
+std::string folder_for(const std::string &root, const std::string &kind)
+{
+    static const struct { const char *kind; const char *names[8]; } kAlias[] = {
+        { "bios",  { "bios", "BIOS", "system", nullptr } },
+        { "cd",    { "cd", "cds", "Games", "games", "roms", "discs", "iso", nullptr } },
+        { "saves", { "saves", "save", "saveram", "savedata", nullptr } },
+    };
+    if (root.empty()) return std::string();
+
+    /*
+     * The one with the library in it wins.
+     *
+     * Order alone is not enough. This app creates "cd" when it finds nothing,
+     * and an empty "cd" created on a previous run then beat the "Games" folder
+     * holding two hundred discs -- for ever, because it existed and came
+     * first. So every candidate that exists is looked at, and one that
+     * actually holds something is preferred to one that does not.
+     */
+    std::string first_existing;
+    for (const auto &a : kAlias) {
+        if (kind != a.kind) continue;
+        for (int i = 0; a.names[i]; ++i) {
+            const std::string p = root + "/" + a.names[i];
+            SDL_PathInfo info;
+            if (!SDL_GetPathInfo(p.c_str(), &info)) continue;
+            if (info.type != SDL_PATHTYPE_DIRECTORY) continue;
+            if (first_existing.empty()) first_existing = p;
+
+            int n = 0;
+            char **found = SDL_GlobDirectory(p.c_str(), nullptr,
+                                             SDL_GLOB_CASEINSENSITIVE, &n);
+            bool has_something = false;
+            for (int j = 0; found && j < n && found[j]; ++j) {
+                const std::string name = found[j];
+                if (name.find('/') != std::string::npos) continue;
+                if (kind == "cd") { if (is_disc_image(name)) { has_something = true; break; } }
+                else              { has_something = true; break; }
+            }
+            if (found) SDL_free(found);
+            if (has_something) return p;
+        }
+        break;
+    }
+    if (!first_existing.empty()) return first_existing;
+    /* Nothing there under any name it might have: this is the one to make. */
+    return root + "/" + kind;
+}
 
 bool pickers_usable()
 {

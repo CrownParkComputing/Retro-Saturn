@@ -737,10 +737,13 @@ int main(int argc, char **argv)
         if (!real.empty()) {
             /* A path, so use it and forget the tree: every part of the app
              * works better with one, and staging would be copying a file onto
-             * the device it is already on. */
+             * the device it is already on.
+             *
+             * Through folder_for, so a library already sitting in "Games" is
+             * found rather than a new empty "cd" being made beside it. */
             cfg.disc_tree.clear();
-            cfg.disc_root = real + "/cd";
-            cfg.saves_dir = real + "/saves";
+            cfg.disc_root = saturn::folder_for(real, "cd");
+            cfg.saves_dir = saturn::folder_for(real, "saves");
             SDL_CreateDirectory(cfg.disc_root.c_str());
             SDL_CreateDirectory(cfg.saves_dir.c_str());
         } else {
@@ -776,8 +779,12 @@ int main(int argc, char **argv)
         }
 
         if (cfg.disc_root.empty()) return;
-        /* A path: look in bios/ beside the discs first, then among them. */
-        std::string found = saturn::find_bios_in(cfg.disc_root + "/../bios");
+        /* A path: the bios folder beside the discs first, whatever it is
+         * called, then among the discs themselves. */
+        const size_t slash = cfg.disc_root.rfind('/');
+        const std::string parent = slash == std::string::npos
+                                 ? cfg.disc_root : cfg.disc_root.substr(0, slash);
+        std::string found = saturn::find_bios_in(saturn::folder_for(parent, "bios"));
         if (found.empty()) found = saturn::find_bios_in(cfg.disc_root);
         if (found.empty()) return;
         cfg.bios_path = found;
@@ -1056,7 +1063,14 @@ int main(int argc, char **argv)
 
     Face face = Face::Discs;
     char disc_letter = 0;          /* A-Z strip on the shelf; 0 = everything */
-    bool shelf_grid = true;        /* covers rather than a column of names */
+    /*
+     * Covers where covers can exist, names where they cannot.
+     *
+     * The art comes from RetroMedia, so on a build without that client the
+     * grid can only ever be rows of empty plates -- which is a worse shelf
+     * than a list, not a better one. Still a button either way.
+     */
+    bool shelf_grid = saturn::media_available();
 
     /* ---- RetroMedia ----
      *
@@ -1520,7 +1534,10 @@ int main(int argc, char **argv)
                          ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
                          ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse);
 
-            static const char *kStep[] = { "Welcome", "The BIOS", "Your discs",
+            /* Discs before BIOS, deliberately. The BIOS now lives in a
+             * folder the user chooses, so asking for it first left "look for
+             * it" with nowhere to look. */
+            static const char *kStep[] = { "Welcome", "Your discs", "The BIOS",
                                            "Something to run", "Ready" };
             const int kSteps = (int)SDL_arraysize(kStep);
             if (wstep < 0) wstep = 0;
@@ -1550,6 +1567,119 @@ int main(int argc, char **argv)
             }
 
             else if (wstep == 1) {
+                ImGui::TextWrapped("Where do you keep your disc images?");
+                ImGui::Spacing();
+#if defined(__ANDROID__)
+                /*
+                 * The grant first, and nothing above it.
+                 *
+                 * This used to open with two paragraphs about Android's
+                 * storage rules and a pair of the app's own folders, and the
+                 * button that most people actually want was under all of it,
+                 * off the bottom of a phone screen. The explanation is still
+                 * here; it is just no longer in the way.
+                 */
+                ImGui::TextWrapped("Choose one folder and this app will use it for "
+                                   "everything -- your discs, your BIOS and your "
+                                   "saves.");
+                ImGui::Spacing();
+                if (saturn::saf_available()) {
+                    if (ImGui::Button("Choose a folder...", ImVec2(fs2 * 14.0f, 0)))
+                        saturn::saf_pick();
+                    ImGui::Spacing();
+                    TextDimWrapped("Android will ask you to grant it. Inside it this "
+                                   "app makes three folders and touches nothing else: "
+                                   "bios for your Saturn BIOS, cd for your discs, and "
+                                   "saves for your game saves. Folders already there "
+                                   "are left exactly as they are.");
+                    ImGui::Spacing();
+
+                    /* The grant arrives asynchronously, so this is how it is
+                     * noticed -- there is nothing else to wait on. */
+                    for (const saturn::SafTree &t : saturn::saf_trees()) {
+                        const bool in_use =
+                            t.uri == cfg.disc_tree ||
+                            (!t.path.empty() && !cfg.disc_root.empty() &&
+                             cfg.disc_root.rfind(t.path, 0) == 0);
+                        ImGui::PushID(t.uri.c_str());
+                        if (in_use) {
+                            ImGui::PushStyleColor(ImGuiCol_Text,
+                                                  ImVec4(0.55f, 0.85f, 0.55f, 1.0f));
+                            ImGui::TextWrapped("Using %s", t.name.c_str());
+                            ImGui::PopStyleColor();
+                        } else if (ImGui::Button(t.name.c_str())) {
+                            adopt_tree(t.uri);
+                            resolve_saves();
+                            rescan();
+                            adopt_bios_from_discs();
+                        }
+                        ImGui::PopID();
+                    }
+                }
+
+                ImGui::Spacing();
+                ImGui::Separator();
+                ImGui::Spacing();
+                TextDimWrapped("Or use one of the app's own folders, which need no "
+                               "permission at all and which a file manager or a USB "
+                               "cable can reach. There is one per storage volume, so "
+                               "a memory card is here too:");
+                ImGui::Spacing();
+                for (const std::string &r : saturn::candidate_disc_roots()) {
+                    ImGui::PushID(r.c_str());
+                    if (ImGui::RadioButton("##r", cfg.disc_tree.empty() &&
+                                                  cfg.disc_root == r)) {
+                        cfg.disc_tree.clear();
+                        cfg.disc_root = r;
+                        SDL_CreateDirectory(r.c_str());
+                        resolve_saves();
+                        rescan();
+                        adopt_bios_from_discs();
+                        saturn::save_app_config(cfg_path, cfg);
+                    }
+                    ImGui::SameLine();
+                    ImGui::TextWrapped("%s", r.c_str());
+                    ImGui::PopID();
+                }
+#else
+                TextDimWrapped("One folder of disc images. Not a folder of folders: "
+                               "a Saturn game is a disc.");
+                ImGui::Spacing();
+                for (const std::string &r : saturn::candidate_disc_roots()) {
+                    ImGui::PushID(r.c_str());
+                    if (ImGui::RadioButton("##r", cfg.disc_root == r)) {
+                        cfg.disc_root = r;
+                        SDL_CreateDirectory(r.c_str());
+                        resolve_saves();
+                        rescan();
+                        adopt_bios_from_discs();
+                        saturn::save_app_config(cfg_path, cfg);
+                    }
+                    ImGui::SameLine();
+                    ImGui::TextWrapped("%s", r.c_str());
+                    ImGui::PopID();
+                }
+                ImGui::Spacing();
+                ImGui::BeginDisabled(saturn::pick_in_progress());
+                if (ImGui::Button("Choose another folder...")) saturn::begin_pick_folder();
+                ImGui::EndDisabled();
+                {
+                    std::string got;
+                    if (saturn::take_pick(got)) {
+                        cfg.disc_root = got;
+                        resolve_saves();
+                        rescan();
+                        adopt_bios_from_discs();
+                        saturn::save_app_config(cfg_path, cfg);
+                    }
+                }
+#endif
+                ImGui::Spacing();
+                TextDimWrappedF("%zu disc%s found so far.", games.size(),
+                                games.size() == 1 ? "" : "s");
+            }
+
+            else if (wstep == 2) {
                 ImGui::TextWrapped("The Saturn will not start without its BIOS, and "
                                    "this app cannot give you one -- it is Sega's, and "
                                    "copyrighted.");
@@ -1567,23 +1697,29 @@ int main(int argc, char **argv)
                     if (ImGui::Button("Choose the BIOS file...")) saturn::begin_pick_file();
                     ImGui::EndDisabled();
                 } else {
-                    /* No picker worth offering here -- see pickers_usable().
+                    /*
+                     * No picker worth offering here -- see pickers_usable().
                      * Finding it is the route instead, and a better one: the
-                     * BIOS goes in the discs folder with everything else and
-                     * the app notices. */
-                    TextDimWrapped("Put it in the discs folder from the next step, "
-                                   "along with your games, and it will be found: a "
-                                   "Saturn BIOS is exactly 512 KB, which nothing else "
-                                   "in a folder of discs is.");
-                    ImGui::Spacing();
-                    if (ImGui::Button("Look for it now")) {
-                        const std::string b = saturn::find_bios_in(cfg.disc_root);
-                        if (!b.empty()) {
-                            cfg.bios_path = b;
-                            load_bios();
-                            saturn::save_app_config(cfg_path, cfg);
-                        }
+                     * BIOS goes in the folder chosen on the step before, and
+                     * the app notices.
+                     */
+                    if (!cfg.disc_tree.empty() || !cfg.disc_root.empty()) {
+                        ImGui::TextWrapped("Put it in the bios folder inside the "
+                                           "folder you chose, and it will be found: a "
+                                           "Saturn BIOS is exactly 512 KB, which "
+                                           "nothing else there is.");
+                    } else {
+                        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.75f, 0.3f, 1.0f));
+                        ImGui::TextWrapped("Go back a step and choose a folder first -- "
+                                           "the BIOS goes inside it, and until there is "
+                                           "one there is nowhere to look.");
+                        ImGui::PopStyleColor();
                     }
+                    ImGui::Spacing();
+                    ImGui::BeginDisabled(cfg.disc_tree.empty() && cfg.disc_root.empty());
+                    if (ImGui::Button("Look for it now", ImVec2(fs2 * 12.0f, 0)))
+                        adopt_bios_from_discs();
+                    ImGui::EndDisabled();
                 }
                 if (saturn::pick_in_progress()) {
                     ImGui::SameLine();
@@ -1620,109 +1756,6 @@ int main(int argc, char **argv)
                     TextDimWrapped("You can carry on without one and come back later "
                                    "-- you will be able to look around, but nothing "
                                    "will boot.");
-                }
-            }
-
-            else if (wstep == 2) {
-                ImGui::TextWrapped("Where do you keep your disc images?");
-                ImGui::Spacing();
-#if defined(__ANDROID__)
-                /*
-                 * Android stopped handing out storage.
-                 *
-                 * There is no "give this app your files" any more: the system
-                 * grants ONE directory at a time, the one chosen in its own
-                 * picker, and nothing else. Saying so here is the difference
-                 * between a user who picks a folder and one who goes looking
-                 * for a permission switch that no longer exists.
-                 */
-                TextDimWrapped("Android grants one folder at a time -- the one you "
-                               "pick, and nothing around it. This app never asks for "
-                               "access to all your files.");
-                ImGui::Spacing();
-                ImGui::TextWrapped("The simplest choice is the app's own folder, "
-                                   "which needs no permission at all and which any "
-                                   "file manager or a USB cable can reach:");
-#else
-                TextDimWrapped("One folder of disc images. Not a folder of folders: "
-                               "a Saturn game is a disc.");
-#endif
-                ImGui::Spacing();
-                for (const std::string &r : saturn::candidate_disc_roots()) {
-                    ImGui::PushID(r.c_str());
-                    if (ImGui::RadioButton("##r", cfg.disc_root == r)) {
-                        cfg.disc_root = r;
-                        SDL_CreateDirectory(r.c_str());
-                        rescan();
-                        adopt_bios_from_discs();
-                        saturn::save_app_config(cfg_path, cfg);
-                    }
-                    ImGui::SameLine();
-                    ImGui::TextWrapped("%s", r.c_str());
-                    ImGui::PopID();
-                }
-
-                ImGui::Spacing();
-                if (saturn::pickers_usable()) {
-                    ImGui::BeginDisabled(saturn::pick_in_progress());
-                    if (ImGui::Button("Choose another folder...")) saturn::begin_pick_folder();
-                    ImGui::EndDisabled();
-                } else if (saturn::saf_available()) {
-                    ImGui::Separator();
-                    ImGui::Spacing();
-                    ImGui::TextWrapped("Or choose a folder of your own -- anywhere on "
-                                       "the device or a memory card:");
-                    ImGui::Spacing();
-                    if (ImGui::Button("Choose a folder...")) saturn::saf_pick();
-                    TextDimWrapped("Android will ask you to grant it. Inside it this "
-                                   "app makes three folders and uses nothing else: "
-                                   "bios for your Saturn BIOS, cd for your discs, and "
-                                   "saves for your game saves. If they are already "
-                                   "there they are left exactly as they are.");
-                    ImGui::Spacing();
-                    /* The grant lands asynchronously, so this is how it is
-                     * noticed: cheap, and there is nothing else to wait on. */
-                    for (const saturn::SafTree &t : saturn::saf_trees()) {
-                        if (t.uri == cfg.disc_tree ||
-                            (!t.path.empty() && cfg.disc_root.rfind(t.path, 0) == 0)) {
-                            ImGui::PushStyleColor(ImGuiCol_Text,
-                                                  ImVec4(0.55f, 0.85f, 0.55f, 1.0f));
-                            ImGui::TextWrapped("Using %s", t.name.c_str());
-                            ImGui::PopStyleColor();
-                            continue;
-                        }
-                        ImGui::PushID(t.uri.c_str());
-                        if (ImGui::Button(t.name.c_str())) {
-                            adopt_tree(t.uri);
-                            rescan();
-                            adopt_bios_from_discs();
-                        }
-                        ImGui::PopID();
-                    }
-                }
-                {
-                    std::string got;
-                    if (saturn::take_pick(got)) {
-                        cfg.disc_root = got;
-                        rescan();
-                        saturn::save_app_config(cfg_path, cfg);
-                    }
-                }
-                ImGui::Spacing();
-                if (!cfg.disc_root.empty()) {
-                    SDL_CreateDirectory(cfg.disc_root.c_str());
-                    ImGui::Text("Using: %s", cfg.disc_root.c_str());
-                    if (ImGui::Button("Look again")) rescan();
-                    ImGui::SameLine();
-                    if (games.empty()) TextDim("nothing there yet");
-                    else {
-                        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.55f, 0.85f, 0.55f, 1.0f));
-                        ImGui::Text("%zu found", games.size());
-                        ImGui::PopStyleColor();
-                    }
-                } else {
-                    can_advance = false;
-                    TextDim("Choose a folder to continue.");
                 }
             }
 
@@ -2284,7 +2317,8 @@ int main(int argc, char **argv)
                  * "(no folder s" is worse than no path at all. */
                 TextDimWrappedF("%zu game%s in %s", games.size(),
                                 games.size() == 1 ? "" : "s",
-                                !cfg.disc_tree.empty() ? "the folder you granted, cd"
+                                !cfg.disc_tree.empty()
+                                    ? saturn::saf_folder_name(cfg.disc_tree, "cd").c_str()
                                 : cfg.disc_root.empty() ? "(no folder set)"
                                                         : cfg.disc_root.c_str());
                 ImGui::Separator();

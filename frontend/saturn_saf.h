@@ -36,8 +36,13 @@ std::vector<SafTree> saf_trees();
 /** Drop a grant. The files are untouched; only our access goes. */
 void saf_forget(const std::string &uri);
 
-/** Create bios/, cd/ and saves/ in a tree unless they are already there. */
+/** Create bios/, cd/ and saves/ in a tree unless something that plainly is
+ *  one of them is already there -- "BIOS" and "Games" count. */
 bool saf_ensure_layout(const std::string &uri);
+
+/** What `kind` ("bios", "cd", "saves") is actually called in this tree, which
+ *  is not necessarily what we would have called it. */
+std::string saf_folder_name(const std::string &uri, const std::string &kind);
 
 /** One file in a granted folder. */
 struct SafEntry { std::string name; long long bytes = 0; };

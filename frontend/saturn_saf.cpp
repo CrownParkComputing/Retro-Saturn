@@ -191,6 +191,14 @@ std::string saf_stage(const std::string &uri, const std::string &sub,
 
 int saf_stage_progress() { return call_int("stageProgress"); }
 
+std::string saf_folder_name(const std::string &uri, const std::string &kind)
+{
+    const std::string n = call_str(
+        "folderName", "(Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;",
+        { uri, kind });
+    return n.empty() ? kind : n;
+}
+
 } /* namespace saturn */
 
 #else  /* everywhere with an ordinary filesystem */
@@ -206,6 +214,7 @@ std::vector<SafEntry> saf_list(const std::string &, const std::string &) { retur
 std::string saf_stage(const std::string &, const std::string &,
                       const std::string &, const std::string &) { return {}; }
 int saf_stage_progress() { return -1; }
+std::string saf_folder_name(const std::string &, const std::string &k) { return k; }
 
 } /* namespace saturn */
 
