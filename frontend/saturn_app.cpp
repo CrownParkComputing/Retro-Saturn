@@ -27,6 +27,7 @@
  */
 #include "saturn_config.h"
 #include "saturn_library.h"
+#include "saturn_setup.h"
 
 #include <SDL3/SDL.h>
 
@@ -210,11 +211,37 @@ int main(int argc, char **argv)
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
     ImGui::GetIO().ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
-    ImGui::GetIO().ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;
+    /*
+     * Gamepad navigation is deliberately OFF.
+     *
+     * With a pad plugged in it drives the interface as well as the Saturn, and
+     * a stick that rests a little off centre -- which is most of them -- walks
+     * the focus and then activates whatever it lands on. The first-run wizard
+     * vanished before it could be read, having pressed its own Skip button,
+     * and the config came back saying the setup had been completed. Nothing on
+     * screen suggested why.
+     *
+     * The pad's job here is to play the Saturn. The menus have a mouse and a
+     * keyboard.
+     */
     ImGui::GetIO().IniFilename = nullptr;   /* no imgui.ini beside the binary */
     apply_style();
     ImGui_ImplSDL3_InitForSDLRenderer(win, ren);
     ImGui_ImplSDLRenderer3_Init(ren);
+    /*
+     * The interface takes no gamepads at all.
+     *
+     * Turning off NavEnableGamepad is not enough: the SDL3 backend defaults to
+     * AutoFirst, which OPENS the first pad itself and feeds it to ImGui. Two
+     * consequences, both seen here. The interface navigated and activated
+     * itself -- the first-run wizard pressed its own Skip button and was gone
+     * before it could be read -- and the pad was already claimed, so the
+     * emulator's own handler never saw it.
+     *
+     * Manual with no gamepads is the documented way to say "none". The pad is
+     * opened below, by this app, for the Saturn.
+     */
+    ImGui_ImplSDL3_SetGamepadMode(ImGui_ImplSDL3_GamepadMode_Manual, nullptr, 0);
 
     /* ---- where settings live ---- */
     std::string cfg_dir;
@@ -378,6 +405,11 @@ int main(int argc, char **argv)
     }
 
     Face face = Face::Discs;
+    /* The wizard runs until it is finished once, and can be asked for again
+     * from Console. A disc on the command line skips it: somebody who
+     * double-clicked a game has answered the only question it asks. */
+    bool wizard = !cfg.wizard_done && loaded_game_index < 0;
+    int  wstep = 0;
     bool running_view = loaded_game_index >= 0;   /* given a disc: play it */
     bool show_pause = false;
     char search[96] = {0};
@@ -524,7 +556,246 @@ int main(int argc, char **argv)
         ImGui_ImplSDL3_NewFrame();
         ImGui::NewFrame();
 
-        if (!running_view) {
+        /* ================= first run ================= */
+        if (wizard) {
+            ImGui::SetNextWindowPos(ImVec2(0, 0));
+            ImGui::SetNextWindowSize(ImVec2((float)win_w, (float)win_h));
+            ImGui::Begin("##setup", nullptr,
+                         ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
+                         ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse);
+
+            static const char *kStep[] = { "Welcome", "The BIOS", "Your discs",
+                                           "Something to run", "Ready" };
+            const int kSteps = (int)SDL_arraysize(kStep);
+            if (wstep < 0) wstep = 0;
+            if (wstep >= kSteps) wstep = kSteps - 1;
+            const float fs2 = ImGui::GetFontSize();
+
+            ImGui::Text("Retro-Saturn  -  step %d of %d: %s", wstep + 1, kSteps,
+                        kStep[wstep]);
+            ImGui::Separator();
+            ImGui::BeginChild("##wbody",
+                              ImVec2(0, -ImGui::GetFrameHeightWithSpacing() * 1.6f));
+            ImGui::PushTextWrapPos(0.0f);
+
+            bool can_advance = true;
+
+            if (wstep == 0) {
+                ImGui::TextWrapped("This is a Sega Saturn. It runs the discs you "
+                                   "already own, as disc images -- .cue, .chd, .iso "
+                                   "or .ccd files.");
+                ImGui::Spacing();
+                ImGui::TextWrapped("Two things are needed before it can start, and "
+                                   "the next two screens are about them: a BIOS, and "
+                                   "somewhere to keep your discs.");
+                ImGui::Spacing();
+                TextDimWrapped("The emulation is Ymir's work, under the GPL. This app "
+                               "supplies no BIOS and no games.");
+            }
+
+            else if (wstep == 1) {
+                ImGui::TextWrapped("The Saturn will not start without its BIOS, and "
+                                   "this app cannot give you one -- it is Sega's, and "
+                                   "copyrighted.");
+                ImGui::Spacing();
+                ImGui::TextWrapped("Dump it from a console you own. It is a 512 KB "
+                                   "file, usually called saturn_bios.bin.");
+                ImGui::Spacing();
+
+                static char bpath[1024];
+                static bool bprimed = false;
+                if (!bprimed) { SDL_strlcpy(bpath, cfg.bios_path.c_str(), sizeof bpath);
+                                bprimed = true; }
+                if (saturn::pick_file_supported() && ImGui::Button("Choose the BIOS file...")) {
+                    std::string got;
+                    if (saturn::pick_file(got)) {
+                        cfg.bios_path = got;
+                        SDL_strlcpy(bpath, got.c_str(), sizeof bpath);
+                        load_bios();
+                        saturn::save_app_config(cfg_path, cfg);
+                    }
+                }
+                ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x * 0.8f);
+                if (ImGui::InputText("##bp", bpath, sizeof bpath)) {
+                    cfg.bios_path = bpath;
+                    load_bios();
+                    saturn::save_app_config(cfg_path, cfg);
+                }
+
+                ImGui::Spacing();
+                if (bios_loaded) {
+                    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.55f, 0.85f, 0.55f, 1.0f));
+                    ImGui::TextUnformatted("Loaded. That is the hard part done.");
+                    ImGui::PopStyleColor();
+                } else {
+                    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.75f, 0.3f, 1.0f));
+                    ImGui::TextUnformatted(cfg.bios_path.empty()
+                                           ? "No BIOS chosen yet."
+                                           : "That file could not be read as a BIOS.");
+                    ImGui::PopStyleColor();
+                    ImGui::Spacing();
+                    TextDimWrapped("You can carry on without one and come back later "
+                                   "-- you will be able to look around, but nothing "
+                                   "will boot.");
+                }
+            }
+
+            else if (wstep == 2) {
+                ImGui::TextWrapped("Where do you keep your disc images?");
+                ImGui::Spacing();
+#if defined(__ANDROID__)
+                /*
+                 * Android stopped handing out storage.
+                 *
+                 * There is no "give this app your files" any more: the system
+                 * grants ONE directory at a time, the one chosen in its own
+                 * picker, and nothing else. Saying so here is the difference
+                 * between a user who picks a folder and one who goes looking
+                 * for a permission switch that no longer exists.
+                 */
+                TextDimWrapped("Android grants one folder at a time -- the one you "
+                               "pick, and nothing around it. This app never asks for "
+                               "access to all your files.");
+                ImGui::Spacing();
+                ImGui::TextWrapped("The simplest choice is the app's own folder, "
+                                   "which needs no permission at all and which any "
+                                   "file manager or a USB cable can reach:");
+#else
+                TextDimWrapped("One folder of disc images. Not a folder of folders: "
+                               "a Saturn game is a disc.");
+#endif
+                ImGui::Spacing();
+                for (const std::string &r : saturn::candidate_disc_roots()) {
+                    ImGui::PushID(r.c_str());
+                    if (ImGui::RadioButton("##r", cfg.disc_root == r)) {
+                        cfg.disc_root = r;
+                        SDL_CreateDirectory(r.c_str());
+                        rescan();
+                        saturn::save_app_config(cfg_path, cfg);
+                    }
+                    ImGui::SameLine();
+                    ImGui::TextWrapped("%s", r.c_str());
+                    ImGui::PopID();
+                }
+
+                ImGui::Spacing();
+                if (saturn::pick_folder_supported() &&
+                    ImGui::Button("Choose another folder...")) {
+                    std::string got;
+                    if (saturn::pick_folder(got)) {
+                        cfg.disc_root = got;
+                        rescan();
+                        saturn::save_app_config(cfg_path, cfg);
+                    }
+                }
+                ImGui::Spacing();
+                if (!cfg.disc_root.empty()) {
+                    SDL_CreateDirectory(cfg.disc_root.c_str());
+                    ImGui::Text("Using: %s", cfg.disc_root.c_str());
+                    if (ImGui::Button("Look again")) rescan();
+                    ImGui::SameLine();
+                    if (games.empty()) TextDim("nothing there yet");
+                    else {
+                        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.55f, 0.85f, 0.55f, 1.0f));
+                        ImGui::Text("%zu found", games.size());
+                        ImGui::PopStyleColor();
+                    }
+                } else {
+                    can_advance = false;
+                    TextDim("Choose a folder to continue.");
+                }
+            }
+
+            else if (wstep == 3) {
+                const std::string demo = saturn::demo_disc_path();
+                ImGui::TextWrapped("A demo is included, so there is something to run "
+                                   "before you have copied anything across.");
+                ImGui::Spacing();
+                if (demo.empty()) {
+                    TextDimWrapped("This build did not ship with it.");
+                } else {
+                    ImGui::TextUnformatted(saturn::demo_title());
+                    TextDimWrapped("Free Saturn homebrew from the SegaXtreme "
+                                   "competition. Not a Sega game, and not ours "
+                                   "either -- it is included with permission as "
+                                   "something to test with.");
+                    ImGui::Spacing();
+                    ImGui::BeginDisabled(!bios_loaded);
+                    if (ImGui::Button("Run the demo", ImVec2(fs2 * 12.0f, 0))) {
+                        /* Finish first: coming back to step four after the
+                         * emulator exits, with no sign of why, is worse than
+                         * starting again. */
+                        cfg.wizard_done = true;
+                        saturn::save_app_config(cfg_path, cfg);
+                        wizard = false;
+
+                        saturn::Game g;
+                        saturn::Disc d;
+                        d.path = demo;
+                        d.file = "PPPong.cue";
+                        g.title = saturn::demo_title();
+                        g.discs.push_back(d);
+                        games.insert(games.begin(), g);
+                        insert_disc(0, 0);
+                        running_view = loaded_game_index >= 0;
+                    }
+                    ImGui::EndDisabled();
+                    if (!bios_loaded) {
+                        ImGui::Spacing();
+                        TextDimWrapped("It needs the BIOS too. Nothing on a Saturn "
+                                       "runs without one -- not even a demo.");
+                    }
+                }
+            }
+
+            else {
+                ImGui::TextWrapped("Ready.");
+                ImGui::Spacing();
+                ImGui::Text("BIOS:  %s", bios_loaded ? "loaded" : "not set");
+                ImGui::Text("Discs: %s", cfg.disc_root.c_str());
+                ImGui::Text("Found: %zu", games.size());
+                ImGui::Spacing();
+                ImGui::Separator();
+                ImGui::Spacing();
+                TextDimWrapped("The two controller ports are along the bottom of the "
+                               "main screen. Change what is plugged into them there "
+                               "-- a light gun or a wheel is a different peripheral, "
+                               "not a setting.");
+                ImGui::Spacing();
+                TextDimWrapped("This screen is under Console, as Run setup again.");
+            }
+
+            ImGui::PopTextWrapPos();
+            ImGui::EndChild();
+
+            ImGui::Separator();
+            ImGui::BeginDisabled(wstep == 0);
+            if (ImGui::Button("Back")) --wstep;
+            ImGui::EndDisabled();
+            ImGui::SameLine();
+            if (wstep < kSteps - 1) {
+                ImGui::BeginDisabled(!can_advance);
+                if (ImGui::Button("Next")) ++wstep;
+                ImGui::EndDisabled();
+            } else {
+                if (ImGui::Button("Finish")) {
+                    cfg.wizard_done = true;
+                    saturn::save_app_config(cfg_path, cfg);
+                    wizard = false;
+                }
+            }
+            ImGui::SameLine();
+            ImGui::TextDisabled("   step %d of %d", wstep + 1, kSteps);
+            ImGui::SameLine(ImGui::GetContentRegionAvail().x - fs2 * 4.0f);
+            if (ImGui::SmallButton("Skip")) {
+                cfg.wizard_done = true;
+                saturn::save_app_config(cfg_path, cfg);
+                wizard = false;
+            }
+            ImGui::End();
+        }
+
+        else if (!running_view) {
             ImGui::SetNextWindowPos(ImVec2(0, 0));
             ImGui::SetNextWindowSize(ImVec2((float)win_w, (float)win_h));
             ImGui::Begin("##shell", nullptr,
@@ -708,6 +979,25 @@ int main(int argc, char **argv)
                     cfg.disc_root = root_buf;
                     saturn::save_app_config(cfg_path, cfg);
                     rescan();
+                }
+
+                ImGui::Spacing();
+                if (ImGui::Button("Run setup again")) { wizard = true; wstep = 0; }
+                ImGui::SameLine();
+                {
+                    const std::string demo = saturn::demo_disc_path();
+                    ImGui::BeginDisabled(demo.empty() || !bios_loaded);
+                    if (ImGui::Button("Run the demo")) {
+                        saturn::Game g;
+                        saturn::Disc d;
+                        d.path = demo; d.file = "PPPong.cue";
+                        g.title = saturn::demo_title();
+                        g.discs.push_back(d);
+                        games.insert(games.begin(), g);
+                        insert_disc(0, 0);
+                        running_view = loaded_game_index >= 0;
+                    }
+                    ImGui::EndDisabled();
                 }
 
                 ImGui::Spacing(); ImGui::Separator(); ImGui::Spacing();
