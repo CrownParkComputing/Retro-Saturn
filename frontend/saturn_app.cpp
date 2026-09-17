@@ -153,7 +153,15 @@ const KeyBind kKeyMap[] = {
 
 } /* namespace */
 
-int main(int, char **)
+/*
+ * A disc on the command line starts it.
+ *
+ * Every desktop application opens the file it is given, and a file manager
+ * expects that too -- double-clicking a .chd should run the game, not show a
+ * shelf with the game on it. It is also the only way to start this thing
+ * without a mouse, which is what made it testable.
+ */
+int main(int argc, char **argv)
 {
     if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_GAMEPAD)) {
         SDL_Log("SDL_Init: %s", SDL_GetError());
@@ -256,6 +264,17 @@ int main(int, char **)
             message = "Could not read " + d->file;
             return;
         }
+        /*
+         * Reconnect the peripherals AFTER the disc.
+         *
+         * Loading a BIOS or a disc resets the machine, and a reset takes the
+         * SMPC's ports with it -- so a Control Pad connected at startup is
+         * gone by the time the game is asking for input. It looks exactly like
+         * a broken key map: the picture is fine, the sound is fine, and
+         * nothing you press does anything.
+         */
+        apply_ports();
+
         loaded_title = g.title;
         loaded_path = d->path;
         loaded_disc_index = discIndex;
@@ -270,8 +289,35 @@ int main(int, char **)
     SDL_Texture *frame = nullptr;
     int frame_w = 0, frame_h = 0;
 
+    /* A disc named on the command line goes straight in, and straight on. */
+    if (argc > 1 && argv[1] && argv[1][0] != '-') {
+        const std::string want = argv[1];
+        rescan();
+        for (size_t i = 0; i < games.size() && loaded_game_index < 0; ++i)
+            for (size_t d = 0; d < games[i].discs.size(); ++d)
+                if (games[i].discs[d].path == want ||
+                    games[i].discs[d].file == base_name(want)) {
+                    insert_disc((int)i, (int)d);
+                    break;
+                }
+        if (loaded_game_index < 0) {
+            /* Not in the shelf -- a disc from anywhere else on the system.
+             * Take it on its own terms rather than refusing it. */
+            std::string title;
+            saturn::Game g;
+            saturn::Disc d;
+            d.path = want;
+            d.file = base_name(want);
+            d.number = saturn::disc_number_of(d.file, title);
+            g.title = title.empty() ? d.file : title;
+            g.discs.push_back(d);
+            games.insert(games.begin(), g);
+            insert_disc(0, 0);
+        }
+    }
+
     Face face = Face::Discs;
-    bool running_view = false;     /* the emulator fills the window */
+    bool running_view = loaded_game_index >= 0;   /* given a disc: play it */
     bool show_pause = false;
     char search[96] = {0};
     bool quit = false;
