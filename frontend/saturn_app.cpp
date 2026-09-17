@@ -1304,17 +1304,58 @@ int main(int argc, char **argv)
         return 0;
     };
 
-    int  state_slot = 0;
     std::string state_message;
     Uint64 state_message_at = 0;
 
-    auto state_path = [&](int slot) {
+    /*
+     * A save is a file, not a slot.
+     *
+     * Four numbered slots meant deciding, every time, which of your own saves
+     * to destroy -- and the decision came up at the worst moment, with the
+     * game paused mid-fight. Saving now writes a new file stamped with the
+     * time, so nothing is ever overwritten and there is no limit but the
+     * card. The Saves page is where they are read back and deleted, which is
+     * a thing to do at leisure rather than at a boss.
+     *
+     * The stamp is YYYYMMDD-HHMMSS so the newest is also the last in
+     * alphabetical order: "which is most recent" needs no date parsing, on a
+     * filesystem whose timestamps we cannot always trust.
+     */
+    auto state_stem = [&]() {
         std::string stem = base_name(loaded_path);
         const size_t dot = stem.rfind('.');
         if (dot != std::string::npos) stem.erase(dot);
         for (char &c : stem)
             if (c == '/' || c == '\\' || c == ':') c = '_';
-        return states_dir + "/" + stem + ".s" + std::to_string(slot + 1);
+        return stem;
+    };
+
+    auto state_new_path = [&]() {
+        SDL_Time now = 0;
+        SDL_DateTime dt{};
+        char when[32] = "00000000-000000";
+        if (SDL_GetCurrentTime(&now) && SDL_TimeToDateTime(now, &dt, true))
+            snprintf(when, sizeof when, "%04d%02d%02d-%02d%02d%02d",
+                     dt.year, dt.month, dt.day, dt.hour, dt.minute, dt.second);
+        return states_dir + "/" + state_stem() + "." + when + ".state";
+    };
+
+    /* The newest save for what is in the drive, or empty if there is none.
+     * Old .s1-.s4 files count: somebody who saved before this changed should
+     * not find their saves gone. */
+    auto state_latest = [&]() {
+        const std::string stem = state_stem();
+        std::string best;
+        int n = 0;
+        char **found = SDL_GlobDirectory(states_dir.c_str(), "*", 0, &n);
+        for (int i = 0; found && i < n; ++i) {
+            const std::string name = found[i];
+            if (name.size() <= stem.size() + 1 || name.compare(0, stem.size(), stem) != 0
+                || name[stem.size()] != '.') continue;
+            if (name > best) best = name;
+        }
+        if (found) SDL_free(found);
+        return best.empty() ? std::string() : states_dir + "/" + best;
     };
 
     auto say = [&](const char *what, int32_t rc) {
@@ -1325,14 +1366,15 @@ int main(int argc, char **argv)
         state_message_at = SDL_GetTicks();
     };
 
-    auto do_save_state = [&](int slot) {
+    auto do_save_state = [&]() {
         if (loaded_game_index < 0) return;
-        say("State saved", ymir_bridge_save_state(ymir, state_path(slot).c_str()));
+        say("Saved", ymir_bridge_save_state(ymir, state_new_path().c_str()));
     };
-    auto do_load_state = [&](int slot) {
+    auto do_load_state = [&]() {
         if (loaded_game_index < 0) return;
-        if (!path_is_file(state_path(slot))) { say("Slot is empty", -1); return; }
-        say("State loaded", ymir_bridge_load_state(ymir, state_path(slot).c_str()));
+        const std::string p = state_latest();
+        if (p.empty()) { say("Nothing saved for this game", -1); return; }
+        say("Loaded the last save", ymir_bridge_load_state(ymir, p.c_str()));
     };
     char search[96] = {0};
     bool quit = false;
@@ -1390,9 +1432,9 @@ int main(int argc, char **argv)
                 if (down && ev.key.scancode == SDL_SCANCODE_ESCAPE) {
                     show_pause = true;
                 } else if (down && ev.key.scancode == SDL_SCANCODE_F5) {
-                    do_save_state(state_slot);
+                    do_save_state();
                 } else if (down && ev.key.scancode == SDL_SCANCODE_F8) {
-                    do_load_state(state_slot);
+                    do_load_state();
                 } else {
                     for (const KeyBind &b : kKeyMap)
                         if (b.key == ev.key.scancode)
@@ -2109,6 +2151,22 @@ int main(int argc, char **argv)
                                           (avail_h - n_head * head_row) / (float)r2 - sp_y);
                         }
                     }
+                }
+
+                /*
+                 * Then grow into whatever is left.
+                 *
+                 * The size above is the SMALLEST that fits, and on a wide
+                 * screen in two columns that left a third of the rail empty
+                 * below Setup -- a column of buttons floating in a panel. The
+                 * bar is a fixed shape, so the buttons should end where it
+                 * does. Capped at three lines, because past that they stop
+                 * reading as buttons and start reading as panels.
+                 */
+                {
+                    const int rows = (n_rows + cols - 1) / cols;
+                    const float room = (avail_h - n_head * head_row) / (float)rows - sp_y;
+                    bh = std::min(std::max(bh, room), fs * 3.0f);
                 }
 
                 const float col_w = cols == 1
@@ -3020,9 +3078,124 @@ int main(int argc, char **argv)
                  * that is a heading with four slots under it.
                  */
                 ImGui::Spacing();
-                TextDimWrapped("A snapshot of the whole machine, per game and per "
-                               "slot. Separate from the console's memory, which every "
-                               "game shares -- that is on the Memory page.");
+                TextDimWrapped("A snapshot of the whole machine, taken whenever you "
+                               "press Save and never overwritten. Separate from the "
+                               "console's memory, which every game shares -- that is "
+                               "on the Memory page.");
+                ImGui::Spacing();
+                TextDim("%s", states_dir.c_str());
+                ImGui::Separator();
+
+                /*
+                 * Every save in the folder, filed under the game it belongs
+                 * to and newest first.
+                 *
+                 * A save is <stem>.<stamp>.state; the old four-slot files are
+                 * <stem>.sN and are listed too, because somebody who saved
+                 * before this changed should not find their saves missing.
+                 * The game is whatever comes before the first dot after the
+                 * stem, which is why the stamp has no dots in it.
+                 */
+                struct Save { std::string file, label; Uint64 when = 0, bytes = 0; };
+                std::map<std::string, std::vector<Save>> by_game;
+                {
+                    int n = 0;
+                    char **found = SDL_GlobDirectory(states_dir.c_str(), "*", 0, &n);
+                    for (int i = 0; found && i < n; ++i) {
+                        const std::string name = found[i];
+                        std::string game, label;
+                        if (name.size() > 6 &&
+                            name.compare(name.size() - 6, 6, ".state") == 0) {
+                            const size_t stamp = name.rfind('.', name.size() - 7);
+                            if (stamp == std::string::npos) continue;
+                            game  = name.substr(0, stamp);
+                            label = name.substr(stamp + 1, name.size() - stamp - 7);
+                        } else {
+                            const size_t dot = name.rfind(".s");
+                            if (dot == std::string::npos || dot + 2 >= name.size()) continue;
+                            const char slot = name[dot + 2];
+                            if (slot < '1' || slot > '4') continue;
+                            game  = name.substr(0, dot);
+                            label = std::string("slot ") + slot;
+                        }
+                        SDL_PathInfo info;
+                        const std::string full = states_dir + "/" + name;
+                        if (!SDL_GetPathInfo(full.c_str(), &info) ||
+                            info.type != SDL_PATHTYPE_FILE) continue;
+                        Save sv;
+                        sv.file  = full;
+                        sv.label = label;
+                        sv.when  = (Uint64)info.modify_time;
+                        sv.bytes = (Uint64)info.size;
+                        by_game[game].push_back(sv);
+                    }
+                    if (found) SDL_free(found);
+                    for (auto &kv : by_game)
+                        std::sort(kv.second.begin(), kv.second.end(),
+                                  [](const Save &a, const Save &b) {
+                                      return a.label > b.label;
+                                  });
+                }
+
+                if (by_game.empty()) {
+                    ImGui::Spacing();
+                    TextDimWrapped("Nothing saved yet. In a game, press Escape and "
+                                   "press Save, or F5 without opening anything. Every "
+                                   "save is kept -- they are listed here, and this is "
+                                   "where they are deleted.");
+                } else {
+                    ImGui::BeginChild("##states");
+                    for (auto &kv : by_game) {
+                        ImGui::PushID(kv.first.c_str());
+                        ImGui::TextUnformatted(kv.first.c_str());
+                        for (size_t i = 0; i < kv.second.size(); ++i) {
+                            const Save &sv = kv.second[i];
+                            ImGui::PushID((int)i);
+                            SDL_DateTime dt{};
+                            if (SDL_TimeToDateTime((SDL_Time)sv.when, &dt, true))
+                                ImGui::Text("   %04d-%02d-%02d %02d:%02d",
+                                            dt.year, dt.month, dt.day, dt.hour, dt.minute);
+                            else
+                                ImGui::Text("   %s", sv.label.c_str());
+                            ImGui::SameLine(fw * 0.30f);
+                            TextDim("%.1f MB", (double)sv.bytes / (1024.0 * 1024.0));
+                            ImGui::SameLine(fw * 0.78f);
+                            ImGui::SmallButton("Delete");
+                            /* Held, not tapped. There is no undo for this and
+                             * the list is full of things worth keeping. */
+                            if (ImGui::IsItemActive() &&
+                                ImGui::GetIO().MouseDownDuration[0] > 0.6f) {
+                                SDL_RemovePath(sv.file.c_str());
+                                say("Deleted", YMIR_OK);
+                            }
+                            if (ImGui::IsItemHovered())
+                                ImGui::SetTooltip("Hold to delete");
+                            ImGui::PopID();
+                        }
+                        ImGui::Spacing();
+                        ImGui::PopID();
+                    }
+                    ImGui::EndChild();
+                }
+                if (!state_message.empty() &&
+                    SDL_GetTicks() - state_message_at <= 5000)
+                    ImGui::TextUnformatted(state_message.c_str());
+            }
+
+            else if (face == Face::Saves) {
+                /*
+                 * Save states, by game, laid out like the shelf.
+                 *
+                 * A state belongs to one disc and to one slot, so a flat list
+                 * of filenames was the wrong shape: the question people
+                 * actually have is "what have I got saved for THIS game", and
+                 * that is a heading with four slots under it.
+                 */
+                ImGui::Spacing();
+                TextDimWrapped("A snapshot of the whole machine, taken whenever you "
+                               "press Save and never overwritten. Separate from the "
+                               "console's memory, which every game shares -- that is "
+                               "on the Memory page.");
                 ImGui::Spacing();
                 TextDim("%s", states_dir.c_str());
                 ImGui::Separator();
@@ -3638,71 +3811,21 @@ int main(int argc, char **argv)
                     }
                 }
                 ImGui::Separator();
-                TextDim("Controllers");
-                /* Here as well as on the shelf, because the moment you find
-                 * out you started with the wrong one is the moment the game
-                 * asks you to press something and nothing happens -- and
-                 * going back to the shelf to fix it costs you where you were. */
-                {
-                    auto pick = [&](const char *label, saturn::Peripheral &p) {
-                        int aw = 0, ah = 0;
-                        if (SDL_Texture *tex = art_for(p, &aw, &ah)) {
-                            const float h = ImGui::GetFrameHeight();
-                            ImGui::Image((ImTextureID)(intptr_t)tex,
-                                         ImVec2(h * (float)aw / (float)ah, h));
-                            ImGui::SameLine();
-                        }
-                        ImGui::SetNextItemWidth(bw.x - ImGui::GetFontSize() * 2.6f);
-                        if (ImGui::BeginCombo(label, saturn::peripheral_name(p))) {
-                            for (int i = 0; i <= (int)saturn::Peripheral::ShuttleMouse; ++i) {
-                                const auto v = (saturn::Peripheral)i;
-                                if (ImGui::Selectable(saturn::peripheral_name(v), p == v)) {
-                                    p = v;
-                                    apply_ports();
-                                    saturn::save_app_config(cfg_path, cfg);
-                                }
-                            }
-                            ImGui::EndCombo();
-                        }
-                    };
-                    pick("##pp1", cfg.machine.port1);
-                    pick("##pp2", cfg.machine.port2);
-                }
-
-                ImGui::Separator();
-                TextDim("Save state");
-                for (int sl = 0; sl < 4; ++sl) {
-                    ImGui::PushID(100 + sl);
-                    char lbl[16];
-                    snprintf(lbl, sizeof lbl, "%d", sl + 1);
-                    if (ImGui::RadioButton(lbl, state_slot == sl)) state_slot = sl;
-                    if (sl < 3) ImGui::SameLine();
-                    ImGui::PopID();
-                }
-                /* Whether the chosen slot holds anything, said plainly: a
-                 * Load that silently does nothing is the worst outcome. */
-                if (loaded_game_index >= 0) {
-                    SDL_PathInfo info;
-                    const std::string sp = state_path(state_slot);
-                    if (SDL_GetPathInfo(sp.c_str(), &info) &&
-                        info.type == SDL_PATHTYPE_FILE) {
-                        SDL_Time t = (SDL_Time)info.modify_time;
-                        SDL_DateTime dt{};
-                        if (SDL_TimeToDateTime(t, &dt, true))
-                            TextDim("slot %d: %04d-%02d-%02d %02d:%02d",
-                                    state_slot + 1, dt.year, dt.month, dt.day,
-                                    dt.hour, dt.minute);
-                        else
-                            TextDim("slot %d: saved", state_slot + 1);
-                    } else {
-                        TextDim("slot %d: empty", state_slot + 1);
-                    }
-                }
-                const ImVec2 hw(ImGui::GetFontSize() * 5.8f, 0);
-                if (ImGui::Button("Save", hw)) do_save_state(state_slot);
+                /*
+                 * Save writes a new one; Load takes the last.
+                 *
+                 * This used to be four radio buttons, a line saying what was
+                 * in the chosen slot, and two peripheral pickers -- enough to
+                 * push the panel past the bottom of a handheld screen, so the
+                 * way out of the game was below a scrollbar. What is left is
+                 * the two things anybody opens this for. Every save is kept;
+                 * the Saves page lists them and is where they are deleted.
+                 */
+                const ImVec2 hw(bw.x * 0.5f - ImGui::GetStyle().ItemSpacing.x * 0.5f, 0);
+                if (ImGui::Button("Save", hw)) do_save_state();
                 ImGui::SameLine();
-                if (ImGui::Button("Load", hw)) {
-                    do_load_state(state_slot);
+                if (ImGui::Button("Load last", hw)) {
+                    do_load_state();
                     show_pause = false;
                 }
                 TextDim("F5 saves, F8 loads, without opening this.");
