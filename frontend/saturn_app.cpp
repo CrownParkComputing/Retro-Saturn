@@ -224,8 +224,9 @@ SDL_Texture *load_png(SDL_Renderer *ren, const char *path, int *out_w, int *out_
  * navigations stacked on top of each other to reach one page. The rail is the
  * navigation now and there is only the one.
  */
-enum class Face { Discs, Setup, Input, Picture, Sound, Processor, Drive,
-                  Saves, Downloads, About };
+enum class Face { Launch, Discs, Downloads, Saves,
+                  Input, Picture, Sound, Processor, Drive,
+                  About, Setup };
 
 /*
  * The initial of a title, for the A-Z strip.
@@ -1070,7 +1071,9 @@ int main(int argc, char **argv)
         }
     }
 
-    Face face = Face::Discs;
+    /* The machine, first: what is in the drive and the button that starts it
+     * is the thing somebody opened the application to do. */
+    Face face = Face::Launch;
     char disc_letter = 0;          /* A-Z strip on the shelf; 0 = everything */
     /*
      * Covers where covers can exist, names where they cannot.
@@ -1971,24 +1974,34 @@ int main(int argc, char **argv)
                 ImGui::Spacing();
                 const ImVec2 bsz(-FLT_MIN, fs * 2.0f);
                 /*
-                 * Everything, grouped by what it is for: the shelf, then the
-                 * console's own settings, then your files, then the app.
-                 * Rules between the groups rather than headings -- a rail of
-                 * ten buttons needs the shape, not the words.
+                 * Ordered by how often it is wanted, not by what it is.
+                 *
+                 * Launch is what somebody opened the application to do, so it
+                 * is first. Then the things you go to during an evening --
+                 * another game, another download, a save. Then the console's
+                 * own settings under a heading, because five of them in a row
+                 * with no label is a list of unrelated words. Setup last:
+                 * where the BIOS and the folders live, which is a thing you do
+                 * once.
                  */
+                tab("Launch", Face::Launch, bsz);
+                ImGui::Spacing();
+
                 tab("Discs", Face::Discs, bsz);
-                ImGui::Separator();
-                tab("Setup", Face::Setup, bsz);
+                if (downloads_offered) tab("Downloads", Face::Downloads, bsz);
+                tab("Save states", Face::Saves, bsz);
+
+                ImGui::Spacing();
+                TextDim("  MACHINE");
                 tab("Input", Face::Input, bsz);
                 tab("Picture", Face::Picture, bsz);
                 tab("Sound", Face::Sound, bsz);
                 tab("Processor", Face::Processor, bsz);
                 tab("Disc drive", Face::Drive, bsz);
-                ImGui::Separator();
-                tab("Saves", Face::Saves, bsz);
-                if (downloads_offered) tab("Downloads", Face::Downloads, bsz);
-                ImGui::Separator();
+
+                ImGui::Spacing();
                 tab("About", Face::About, bsz);
+                tab("Setup", Face::Setup, bsz);
                 ImGui::EndChild();
                 ImGui::SameLine();
             }
@@ -2075,214 +2088,191 @@ int main(int argc, char **argv)
             };
 
             /* ============ the machine, and what is in it ============ */
-            ImGui::BeginChild("##drive", ImVec2(0, head_h), ImGuiChildFlags_Borders);
+            /*
+             * The machine is a page, not a banner.
+             *
+             * It used to sit above every screen, which meant a third of the
+             * window was given to the disc in the drive while you were
+             * adjusting the sound. It is the first entry in the rail now, and
+             * the settings pages get the room back.
+             */
+            if (face == Face::Launch) {
+            ImGui::BeginChild("##drive", ImVec2(0, 0), ImGuiChildFlags_Borders);
             {
-                const float h = head_h - ImGui::GetStyle().WindowPadding.y * 2.0f;
-
                 /*
-                 * The photograph is the first thing to go when space is short.
+                 * The whole page is the machine.
                  *
-                 * It is decoration; the title of what is in the tray is not.
-                 * On a phone the two of them plus the disc left the title
-                 * hanging off the right-hand edge, so on a narrow screen the
-                 * machine steps aside and the spinning disc carries the idea
-                 * on its own.
+                 * Everything here is sized from what is left rather than by
+                 * hand, so the same arrangement fills a phone in landscape and
+                 * a desktop window: the console takes most of the height, the
+                 * two peripherals sit under its ports in the order they are on
+                 * the front of the real one, and the disc turns beside it.
                  */
-                /*
-                 * The machine, with what is plugged into it.
-                 *
-                 * A photograph of a console above photographs of the two
-                 * things in its ports, in the order they are in on the front
-                 * of the real one. It says what the state of the machine is
-                 * without a word: a gun in port one looks like a gun in port
-                 * one, and an empty socket looks like an empty socket.
-                 */
-                if (show_console_art) {
-                    ImGui::BeginGroup();
-                    const float ch = h * 0.70f;
-                    const float cw2 = ch * (float)art_console_w / (float)art_console_h;
-                    ImGui::Image((ImTextureID)(intptr_t)art_console, ImVec2(cw2, ch));
+                const ImVec2 avail = ImGui::GetContentRegionAvail();
+                /* Two lines of title, a line for a message, and the button,
+                 * which is taller than an ordinary frame. Measured, because
+                 * the first version left Power on half off the bottom. */
+                const float text_h = ImGui::GetTextLineHeightWithSpacing() * 3.0f
+                                   + fs * 2.2f
+                                   + ImGui::GetStyle().ItemSpacing.y * 4.0f;
+                const float stage_h = std::max(avail.y - text_h, fs * 6.0f);
 
-                    /* Under the console, under its ports. Sized to the gap
-                     * that is left rather than a fraction picked by hand, so
-                     * the pair always fits the panel it is in. */
-                    const float ph = std::max(h - ch - ImGui::GetStyle().ItemSpacing.y,
-                                              ImGui::GetFrameHeight() * 0.6f);
-                    const float half_w = (cw2 - ImGui::GetStyle().ItemSpacing.x) * 0.5f;
-                    for (int which = 1; which <= 2; ++which) {
-                        const saturn::Peripheral p = (which == 1) ? cfg.machine.port1
-                                                                  : cfg.machine.port2;
-                        if (which == 2) ImGui::SameLine();
-                        const ImVec2 at = ImGui::GetCursorScreenPos();
-                        ImGui::Dummy(ImVec2(half_w, ph));
-                        int aw = 0, ah = 0;
-                        SDL_Texture *tex = art_for(p, &aw, &ah);
-                        ImDrawList *dl = ImGui::GetWindowDrawList();
-                        if (tex && ah > 0) {
-                            float ih = ph, iw = ih * (float)aw / (float)ah;
-                            if (iw > half_w) { iw = half_w; ih = iw * (float)ah / (float)aw; }
-                            dl->AddImage((ImTextureID)(intptr_t)tex,
-                                         ImVec2(at.x + (half_w - iw) * 0.5f,
-                                                at.y + (ph - ih) * 0.5f),
-                                         ImVec2(at.x + (half_w + iw) * 0.5f,
-                                                at.y + (ph + ih) * 0.5f));
-                        } else {
-                            /* An empty socket, drawn as one: a dark slot of
-                             * the shape the Saturn's actually are. */
-                            const float sw = std::min(half_w * 0.5f, ph * 1.7f);
-                            const float sh = std::min(ph * 0.42f, sw * 0.34f);
-                            const ImVec2 a(at.x + (half_w - sw) * 0.5f,
-                                           at.y + (ph - sh) * 0.5f);
-                            const ImVec2 b(a.x + sw, a.y + sh);
-                            dl->AddRectFilled(a, b, IM_COL32(10, 11, 16, 255), 3.0f);
-                            dl->AddRect(a, b, IM_COL32(64, 72, 94, 220), 3.0f);
-                        }
-                    }
-                    ImGui::EndGroup();
-                    ImGui::SameLine();
+                /* The console, as big as the stage allows, with room beside it
+                 * for the disc. */
+                float ch = stage_h * 0.72f;
+                float cwid = art_console_h > 0
+                           ? ch * (float)art_console_w / (float)art_console_h : ch;
+                const float disc_d = std::min(stage_h * 0.55f, avail.x * 0.28f);
+                const float gap = ImGui::GetStyle().ItemSpacing.x * 2.0f;
+                if (cwid + gap + disc_d > avail.x) {
+                    cwid = std::max(avail.x - gap - disc_d, avail.x * 0.35f);
+                    ch = art_console_h > 0
+                       ? cwid * (float)art_console_h / (float)art_console_w : cwid;
                 }
 
-                /*
-                 * And the disc, turning, whenever there is one in the tray.
-                 *
-                 * A drive with something in it should look like a drive with
-                 * something in it. Drawn rather than photographed because it
-                 * has to move, and because the thing it stands for -- the
-                 * machine is doing something -- is exactly what an animation
-                 * says and a still does not.
-                 */
-                if (loaded_game_index >= 0) {
-                    const float d = h * 0.82f;
+                /* Centred as a pair, so the machine sits in the middle of its
+                 * page rather than jammed against the left edge. */
+                const float group_w = cwid + gap + disc_d;
+                ImGui::SetCursorPosX(ImGui::GetCursorPosX() +
+                                     std::max(0.0f, (avail.x - group_w) * 0.5f));
+
+                ImGui::BeginGroup();
+                if (art_console && art_console_h > 0)
+                    ImGui::Image((ImTextureID)(intptr_t)art_console, ImVec2(cwid, ch));
+                else
+                    ImGui::Dummy(ImVec2(cwid, ch));
+
+                /* Under the console, under its ports. */
+                const float ph = std::max(stage_h - ch - ImGui::GetStyle().ItemSpacing.y,
+                                          ImGui::GetFrameHeight() * 0.8f);
+                const float half_w = (cwid - ImGui::GetStyle().ItemSpacing.x) * 0.5f;
+                for (int which = 1; which <= 2; ++which) {
+                    const saturn::Peripheral p = (which == 1) ? cfg.machine.port1
+                                                              : cfg.machine.port2;
+                    if (which == 2) ImGui::SameLine();
                     const ImVec2 at = ImGui::GetCursorScreenPos();
-                    ImGui::Dummy(ImVec2(d, h));
+                    ImGui::Dummy(ImVec2(half_w, ph));
+                    int aw = 0, ah = 0;
+                    SDL_Texture *tex = art_for(p, &aw, &ah);
                     ImDrawList *dl = ImGui::GetWindowDrawList();
-                    const ImVec2 c(at.x + d * 0.5f, at.y + h * 0.5f);
-                    const float  r = d * 0.5f;
-                    /* Stopped while the machine is: a disc still spinning
-                     * behind a frozen picture is telling you something
-                     * untrue. */
-                    static float spin = 0.0f;
-                    spin += ImGui::GetIO().DeltaTime * (machine_running ? 2.4f : 0.0f);
+                    if (tex && ah > 0) {
+                        float ih = ph, iw = ih * (float)aw / (float)ah;
+                        if (iw > half_w) { iw = half_w; ih = iw * (float)ah / (float)aw; }
+                        dl->AddImage((ImTextureID)(intptr_t)tex,
+                                     ImVec2(at.x + (half_w - iw) * 0.5f,
+                                            at.y + (ph - ih) * 0.5f),
+                                     ImVec2(at.x + (half_w + iw) * 0.5f,
+                                            at.y + (ph + ih) * 0.5f));
+                    } else {
+                        /* An empty socket, drawn as one: a dark slot of the
+                         * shape the Saturn's actually are. */
+                        const float sw = std::min(half_w * 0.5f, ph * 1.7f);
+                        const float sh = std::min(ph * 0.42f, sw * 0.34f);
+                        const ImVec2 a(at.x + (half_w - sw) * 0.5f,
+                                       at.y + (ph - sh) * 0.5f);
+                        const ImVec2 b(a.x + sw, a.y + sh);
+                        dl->AddRectFilled(a, b, IM_COL32(10, 11, 16, 255), 3.0f);
+                        dl->AddRect(a, b, IM_COL32(64, 72, 94, 220), 3.0f);
+                    }
+                }
+                ImGui::EndGroup();
+
+                /* ---- the disc, turning ---- */
+                if (loaded_game_index >= 0) {
+                    ImGui::SameLine(0.0f, gap);
+                    const ImVec2 at = ImGui::GetCursorScreenPos();
+                    ImGui::Dummy(ImVec2(disc_d, stage_h));
+                    ImDrawList *dl = ImGui::GetWindowDrawList();
+                    const ImVec2 c(at.x + disc_d * 0.5f, at.y + stage_h * 0.5f);
+                    const float r = disc_d * 0.5f;
 
                     /*
-                     * The real disc, if the catalogue has a picture of one.
+                     * Always turning while it is on screen.
                      *
-                     * The catalogue files disc and cartridge scans under
-                     * "cartridges", and a Saturn's is a printed CD. Spun at
-                     * the same rate as the drawn one, so inserting a game
-                     * looks like putting that game in.
+                     * It used to stop whenever the machine was paused, which
+                     * was right when it lived behind a frozen picture -- and
+                     * wrong here, because the machine is always paused on this
+                     * page and a disc that never moves just looks broken.
                      */
+                    static float spin = 0.0f;
+                    spin += ImGui::GetIO().DeltaTime * 2.4f;
+
                     SDL_Texture *disc_tex = nullptr;
-                    if (loaded_game_index >= 0) {
+                    {
                         auto m = by_key.find(match_key(games[loaded_game_index].title));
                         if (m != by_key.end() &&
                             m->second.media_types.find("cartridges") != std::string::npos) {
-                            const std::string p = art_path_for_kind(m->second, "cartridges");
-                            const std::string k = m->second.slug + "#" + p;
+                            const std::string pth = art_path_for_kind(m->second, "cartridges");
+                            const std::string k = m->second.slug + "#" + pth;
                             auto a = art.find(k);
                             if (a != art.end()) disc_tex = a->second.tex;
-                            else if (art_asked.find(k) == art_asked.end() && !p.empty()) {
+                            else if (!pth.empty() && art_asked.find(k) == art_asked.end()) {
                                 art_asked.insert(k);
                                 art_pending[m->second.slug] = k;
                                 art_in_flight++;
-                                saturn::media_begin_artwork(m->second.slug, p);
+                                saturn::media_begin_artwork(m->second.slug, pth);
                             }
                         }
                     }
 
                     if (disc_tex) {
-                        /* Four corners turned about the middle. ImGui has no
-                         * rotated image, but it has a quad, and a quad with
-                         * rotated corners is the same thing. */
+                        /* Four corners turned about the middle: ImGui has no
+                         * rotated image, but a quad with rotated corners is
+                         * the same thing. */
                         const float cs = cosf(spin), sn = sinf(spin);
                         auto turn = [&](float dx, float dy) {
-                            return ImVec2(c.x + dx * cs - dy * sn,
-                                          c.y + dx * sn + dy * cs);
+                            return ImVec2(c.x + dx * cs - dy * sn, c.y + dx * sn + dy * cs);
                         };
                         dl->AddImageQuad((ImTextureID)(intptr_t)disc_tex,
                                          turn(-r, -r), turn(r, -r), turn(r, r), turn(-r, r),
                                          ImVec2(0, 0), ImVec2(1, 0), ImVec2(1, 1), ImVec2(0, 1));
-                        dl->AddCircle(c, r * 0.99f, IM_COL32(150, 170, 200, 70), 48, 1.5f);
+                        dl->AddCircle(c, r * 0.99f, IM_COL32(150, 170, 200, 70), 64, 1.5f);
                     } else {
-
-                    dl->AddCircleFilled(c, r, IM_COL32(24, 27, 38, 255), 48);
-                    /* The sheen: spokes of shifting hue, which is what a CD
-                     * does under a light and what makes it read as a CD at
-                     * this size. */
-                    for (int i = 0; i < 10; ++i) {
-                        const float a = spin + (float)i * 6.2831853f / 10.0f;
-                        float cr, cg, cb;
-                        ImGui::ColorConvertHSVtoRGB((float)i / 10.0f, 0.55f, 1.0f,
-                                                    cr, cg, cb);
-                        const ImU32 col = IM_COL32((int)(cr * 255), (int)(cg * 255),
-                                                   (int)(cb * 255), 70);
-                        dl->AddLine(ImVec2(c.x + cosf(a) * r * 0.34f,
-                                           c.y + sinf(a) * r * 0.34f),
-                                    ImVec2(c.x + cosf(a) * r * 0.97f,
-                                           c.y + sinf(a) * r * 0.97f),
-                                    col, r * 0.22f);
+                        dl->AddCircleFilled(c, r, IM_COL32(24, 27, 38, 255), 64);
+                        /* The sheen: spokes of shifting hue, which is what a
+                         * CD does under a light. */
+                        for (int i = 0; i < 12; ++i) {
+                            const float a = spin + (float)i * 6.2831853f / 12.0f;
+                            float cr, cg, cb;
+                            ImGui::ColorConvertHSVtoRGB((float)i / 12.0f, 0.55f, 1.0f,
+                                                        cr, cg, cb);
+                            const ImU32 col = IM_COL32((int)(cr * 255), (int)(cg * 255),
+                                                       (int)(cb * 255), 70);
+                            dl->AddLine(ImVec2(c.x + cosf(a) * r * 0.34f,
+                                               c.y + sinf(a) * r * 0.34f),
+                                        ImVec2(c.x + cosf(a) * r * 0.97f,
+                                               c.y + sinf(a) * r * 0.97f),
+                                        col, r * 0.20f);
+                        }
+                        dl->AddCircle(c, r * 0.985f, IM_COL32(150, 170, 200, 90), 64, 1.5f);
+                        dl->AddCircleFilled(c, r * 0.30f, IM_COL32(14, 16, 23, 255), 48);
+                        dl->AddCircle(c, r * 0.30f, IM_COL32(150, 170, 200, 110), 48, 1.5f);
+                        dl->AddCircleFilled(c, r * 0.12f, IM_COL32(9, 10, 15, 255), 32);
                     }
-                    dl->AddCircle(c, r * 0.985f, IM_COL32(150, 170, 200, 90), 48, 1.5f);
-                    dl->AddCircleFilled(c, r * 0.30f, IM_COL32(14, 16, 23, 255), 32);
-                    dl->AddCircle(c, r * 0.30f, IM_COL32(150, 170, 200, 110), 32, 1.5f);
-                    dl->AddCircleFilled(c, r * 0.12f, IM_COL32(9, 10, 15, 255), 24);
-                    }
-                    ImGui::SameLine();
                 }
 
-                /*
-                 * The room for the sockets is taken out of the line BEFORE
-                 * the disc's name is written into it, not after.
-                 *
-                 * Asking what was left once the name had already been drawn
-                 * gave a position measured from the start of the next line,
-                 * and the sockets landed on top of the title.
-                 */
-                /*
-                 * One above the other, not side by side.
-                 *
-                 * Two sockets across the header wanted more width than the
-                 * band had once the machine and the disc had taken theirs, so
-                 * they dropped out to a strip underneath -- which is not what
-                 * "next to the Saturn" means. Stacked they need half as much
-                 * width, and the header is tall enough for both.
-                 */
-                ports_want = half + ImGui::GetStyle().ItemSpacing.x * 2.0f;
-                ports_in_header = ImGui::GetContentRegionAvail().x >
-                                  ports_want + ImGui::GetFontSize() * 9.0f;
-                const float info_w = ports_in_header
-                                   ? ImGui::GetContentRegionAvail().x - ports_want
-                                   : 0.0f;
-
-                ImGui::BeginChild("##info", ImVec2(info_w, h));
+                /* ---- what is in it, and the button ---- */
+                ImGui::Spacing();
                 ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.42f, 0.71f, 0.97f, 1.0f));
                 ImGui::TextUnformatted(loaded_title.empty() ? "NO DISC"
                                                             : loaded_title.c_str());
                 ImGui::PopStyleColor();
-
-                if (!loaded_title.empty())
-                    TextDim("%s", base_name(loaded_path).c_str());
-                else
-                    TextDim("The tray is empty. Choose a disc below.");
-
+                if (!loaded_title.empty()) TextDim("%s", base_name(loaded_path).c_str());
+                else TextDim("The tray is empty. Choose one from Discs.");
                 if (!message.empty()) TextDim("%s", message.c_str());
 
                 ImGui::Spacing();
                 ImGui::BeginDisabled(loaded_game_index < 0);
-                if (ImGui::Button("Power on", ImVec2(fs * 9.0f, 0))) {
+                if (ImGui::Button("Power on", ImVec2(fs * 11.0f, fs * 2.2f))) {
                     running_view = true;
                     show_pause = false;
                 }
                 ImGui::EndDisabled();
-                /* No Eject. There is nothing to eject INTO: choosing another
-                 * disc replaces this one, which is the only thing anybody was
-                 * ever going to do next. */
 
-                /* The disc selector, only for games that have more than one.
-                 * A single-disc game showing "Disc 1 of 1" is noise. */
+                /* The disc selector, only for games that came on more than
+                 * one. A single-disc game showing "Disc 1 of 1" is noise. */
                 if (loaded_game_index >= 0 && games[loaded_game_index].multi()) {
                     ImGui::SameLine();
-                    ImGui::TextUnformatted("|");
                     const saturn::Game &g = games[loaded_game_index];
                     for (size_t i = 0; i < g.discs.size(); ++i) {
                         ImGui::SameLine();
@@ -2298,26 +2288,10 @@ int main(int argc, char **argv)
                         ImGui::PopID();
                     }
                 }
-                ImGui::EndChild();
-
-                /* And the two sockets at the right-hand end, because they are
-                 * part of the console and not a status bar along the bottom
-                 * of the application. */
-                /* The sockets live on the Input page now: a control you set
-                 * once does not belong beside the disc you change constantly. */
             }
             ImGui::EndChild();
-
-            /* Not enough width up there for the sockets: they go under the
-             * machine instead, which is still nearer to it than the bottom of
-             * the window was. */
-            if (!ports_in_header) {
-                ImGui::BeginChild("##ports", ImVec2(0, ports_h), ImGuiChildFlags_Borders);
-                port("p1", cfg.machine.port1, 0.0f);
-                ImGui::SameLine(0.0f, ImGui::GetStyle().ItemSpacing.x * 2.0f);
-                port("p2", cfg.machine.port2, 0.0f);
-                ImGui::EndChild();
-            }
+            }   /* face == Face::Launch */
+            else {
 
             ImGui::Spacing();
 
@@ -2346,16 +2320,17 @@ int main(int argc, char **argv)
                     if (ImGui::GetCursorPosX() + step < right) ImGui::SameLine();
                     tab(label, f, bsz);
                 };
-                tab("Discs", Face::Discs, bsz);
-                flow("Setup", Face::Setup);
+                tab("Launch", Face::Launch, bsz);
+                flow("Discs", Face::Discs);
+                if (downloads_offered) flow("Downloads", Face::Downloads);
+                flow("Saves", Face::Saves);
                 flow("Input", Face::Input);
                 flow("Picture", Face::Picture);
                 flow("Sound", Face::Sound);
                 flow("Processor", Face::Processor);
                 flow("Disc drive", Face::Drive);
-                flow("Saves", Face::Saves);
-                if (downloads_offered) flow("Downloads", Face::Downloads);
                 flow("About", Face::About);
+                flow("Setup", Face::Setup);
                 ImGui::Spacing();
             }
 
@@ -2469,8 +2444,13 @@ int main(int argc, char **argv)
                         else           snprintf(sub, sizeof sub, "%s",
                                                 (int)i == loaded_game_index ? "in the drive" : "");
                         if (cover_card(slug.empty() ? g.title : slug, preview,
-                                       g.title, sub, card_w, &budget))
+                                       g.title, sub, card_w, &budget)) {
                             insert_disc((int)i, 0);
+                            /* Straight to the machine: choosing a disc and
+                             * then having to find the way to the button that
+                             * starts it is a step nobody wants. */
+                            if (loaded_game_index >= 0) face = Face::Launch;
+                        }
                         ImGui::PopID();
                     }
                     ImGui::EndChild();
@@ -2487,8 +2467,10 @@ int main(int argc, char **argv)
                         if (in_drive) ImGui::PushStyleColor(ImGuiCol_Text,
                                           ImVec4(0.42f, 0.71f, 0.97f, 1.0f));
                         if (ImGui::Selectable(g.title.c_str(), in_drive, 0,
-                                              ImVec2(0, fs * 1.9f)))
+                                              ImVec2(0, fs * 1.9f))) {
                             insert_disc((int)i, 0);
+                            if (loaded_game_index >= 0) face = Face::Launch;
+                        }
                         if (in_drive) ImGui::PopStyleColor();
                         ImGui::SameLine(fw * 0.66f);
                         if (g.multi()) TextDim("%zu discs", g.discs.size());
@@ -3205,6 +3187,7 @@ int main(int argc, char **argv)
             }
             ImGui::EndChild();
 
+            }   /* everything that is not Launch */
             ImGui::EndChild();     /* ##right */
 
             ImGui::End();
