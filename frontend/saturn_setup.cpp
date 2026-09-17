@@ -77,60 +77,58 @@ std::vector<std::string> candidate_disc_roots()
 /*
  * The pickers.
  *
- * SDL3 has SDL_ShowOpenFileDialog and SDL_ShowOpenFolderDialog, and on
- * Android they are backed by the Storage Access Framework -- which is the
- * per-folder grant this app wants rather than all-files access. They are
- * asynchronous, so the caller gets a callback; that is wrapped here into the
- * blocking shape the wizard wants, because the wizard is a modal step and has
- * nothing else to do while the user chooses.
+ * SDL_ShowOpenFileDialog and SDL_ShowOpenFolderDialog are asynchronous: they
+ * return at once and call back later, on the main thread, while the ordinary
+ * event loop runs. That is exactly the shape wanted here -- the app keeps
+ * drawing, keeps answering its close button, and picks the answer up whenever
+ * it arrives.
+ *
+ * On Android these are the Storage Access Framework, so a folder chosen here
+ * is granted on its own; the app never asks for access to all files.
  */
 namespace {
 
-struct PickResult {
-    bool done = false;
-    bool ok = false;
+struct Pick {
+    bool        open = false;   /* a dialog is up                        */
+    bool        ready = false;  /* an answer is waiting to be taken      */
     std::string path;
 };
+Pick g_pick;
 
-void pick_cb(void *userdata, const char *const *filelist, int)
+void pick_cb(void *, const char *const *filelist, int)
 {
-    PickResult *r = (PickResult *)userdata;
+    g_pick.open = false;
+    /* A null list is an error; an empty one is a cancel. Neither is an
+     * answer, and neither should overwrite what the user already had. */
     if (filelist && filelist[0]) {
-        r->path = filelist[0];
-        r->ok = true;
+        g_pick.path = filelist[0];
+        g_pick.ready = true;
     }
-    r->done = true;
-}
-
-bool pump_until(PickResult &r)
-{
-    /* The dialog is the system's, and it runs while this loop pumps events --
-     * without which the callback never arrives and the app looks hung. */
-    for (int i = 0; i < 60000 && !r.done; ++i) {
-        SDL_PumpEvents();
-        SDL_Delay(10);
-    }
-    return r.ok;
 }
 
 } /* namespace */
 
-bool pick_folder_supported() { return true; }
+bool pick_in_progress() { return g_pick.open; }
 
-bool pick_folder(std::string &out)
+bool take_pick(std::string &out)
 {
-    PickResult r;
-    SDL_ShowOpenFolderDialog(pick_cb, &r, nullptr, nullptr, false);
-    if (!pump_until(r)) return false;
-    out = r.path;
+    if (!g_pick.ready) return false;
+    g_pick.ready = false;
+    out = g_pick.path;
     return true;
 }
 
-bool pick_file_supported() { return true; }
-
-bool pick_file(std::string &out)
+void begin_pick_folder()
 {
-    PickResult r;
+    if (g_pick.open) return;
+    g_pick.open = true;
+    SDL_ShowOpenFolderDialog(pick_cb, nullptr, nullptr, nullptr, false);
+}
+
+void begin_pick_file()
+{
+    if (g_pick.open) return;
+    g_pick.open = true;
     /* A BIOS dump is a .bin most of the time and a .rom sometimes, but the
      * filter is deliberately loose: somebody's file is called what it is
      * called, and a picker that hides it is a picker they cannot use. */
@@ -138,10 +136,7 @@ bool pick_file(std::string &out)
         { "Saturn BIOS (*.bin, *.rom)", "bin;rom" },
         { "All files", "*" },
     };
-    SDL_ShowOpenFileDialog(pick_cb, &r, nullptr, filters, 2, nullptr, false);
-    if (!pump_until(r)) return false;
-    out = r.path;
-    return true;
+    SDL_ShowOpenFileDialog(pick_cb, nullptr, nullptr, filters, 2, nullptr, false);
 }
 
 } /* namespace saturn */

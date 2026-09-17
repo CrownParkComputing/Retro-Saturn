@@ -51,19 +51,30 @@ const char *demo_title();
 std::vector<std::string> candidate_disc_roots();
 
 /*
- * Ask the system for a folder, if this platform has such a thing.
+ * Ask the system for a folder or a file.
  *
- * Android: opens the document-tree picker, which grants exactly the folder
- * the user chooses and nothing else. Returns false when there is no picker --
- * on a desktop the path is typed, and offering a button that does nothing is
- * worse than offering none.
+ * ASYNCHRONOUS, and it has to be. SDL's dialogs are asynchronous on every
+ * platform and Android's document picker is a whole separate activity -- the
+ * answer arrives whenever the user is finished, which might be after they go
+ * and look something up. The first version of this blocked the main loop
+ * waiting for the callback, and the result was an application that stopped
+ * drawing, stopped responding to its own close button, and was reported by
+ * the desktop as not responding. Nothing may block the loop. Nothing.
+ *
+ * Android's folder picker grants exactly the directory chosen and nothing
+ * around it, which is the whole reason it is used rather than asking for
+ * access to all files.
  */
-bool pick_folder_supported();
-bool pick_folder(std::string &out);
+void begin_pick_folder();
+void begin_pick_file();
 
-/* The same, for a single file: the BIOS. */
-bool pick_file_supported();
-bool pick_file(std::string &out);
+/* True while a dialog is open, so the caller can disable the button that
+ * opened it rather than stacking three of them. */
+bool pick_in_progress();
+
+/* Takes the answer, once. Returns false when there is nothing to take --
+ * no dialog has finished since the last call, or the user cancelled. */
+bool take_pick(std::string &out);
 
 } /* namespace saturn */
 

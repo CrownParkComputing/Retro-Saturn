@@ -296,6 +296,21 @@ int main(int argc, char **argv)
         return bios_loaded;
     };
 
+    /*
+     * The Saturn's own persistent memory: its clock and its language.
+     *
+     * Without this the BIOS shows its "Set Language / Set Time" screen on
+     * EVERY boot, because from the machine's point of view it has never been
+     * switched on before. A real Saturn keeps those in battery-backed SMPC
+     * memory, and this is that battery.
+     *
+     * Loaded before the BIOS, saved when the app closes and after each
+     * session, so a language chosen once stays chosen.
+     */
+    const std::string smpc_path = cfg_dir + "smpc.bin";
+    ymir_bridge_set_persistent_smpc_path(ymir, smpc_path.c_str());
+    ymir_bridge_load_smpc_state(ymir, smpc_path.c_str());
+
     apply_options();
     apply_ports();
     load_bios();
@@ -541,7 +556,17 @@ int main(int argc, char **argv)
             if (pix && w > 0 && h > 0) {
                 if (!frame || w != frame_w || h != frame_h) {
                     if (frame) SDL_DestroyTexture(frame);
-                    frame = SDL_CreateTexture(ren, SDL_PIXELFORMAT_XRGB8888,
+                    /*
+                     * XBGR, not XRGB, whatever the bridge header says.
+                     *
+                     * ymir-core's Color888 is a union whose bitfields run
+                     * r:8, g:8, b:8 -- and bitfields fill from the least
+                     * significant end, so on a little-endian machine red is
+                     * the LOW byte: 0x00BBGGRR. SDL's XRGB8888 is 0x00RRGGBB.
+                     * Asking for that swaps red and blue, which is why the
+                     * demo's blue came out orange.
+                     */
+                    frame = SDL_CreateTexture(ren, SDL_PIXELFORMAT_XBGR8888,
                                               SDL_TEXTUREACCESS_STREAMING, w, h);
                     /* Nearest: a Saturn's 320x224 is hard pixels, and a
                      * filtered one is a blur of them. */
@@ -606,9 +631,16 @@ int main(int argc, char **argv)
                 static bool bprimed = false;
                 if (!bprimed) { SDL_strlcpy(bpath, cfg.bios_path.c_str(), sizeof bpath);
                                 bprimed = true; }
-                if (saturn::pick_file_supported() && ImGui::Button("Choose the BIOS file...")) {
+                ImGui::BeginDisabled(saturn::pick_in_progress());
+                if (ImGui::Button("Choose the BIOS file...")) saturn::begin_pick_file();
+                ImGui::EndDisabled();
+                if (saturn::pick_in_progress()) {
+                    ImGui::SameLine();
+                    TextDim("choosing...");
+                }
+                {   /* The answer arrives whenever the user is finished. */
                     std::string got;
-                    if (saturn::pick_file(got)) {
+                    if (saturn::take_pick(got)) {
                         cfg.bios_path = got;
                         SDL_strlcpy(bpath, got.c_str(), sizeof bpath);
                         load_bios();
@@ -679,10 +711,12 @@ int main(int argc, char **argv)
                 }
 
                 ImGui::Spacing();
-                if (saturn::pick_folder_supported() &&
-                    ImGui::Button("Choose another folder...")) {
+                ImGui::BeginDisabled(saturn::pick_in_progress());
+                if (ImGui::Button("Choose another folder...")) saturn::begin_pick_folder();
+                ImGui::EndDisabled();
+                {
                     std::string got;
-                    if (saturn::pick_folder(got)) {
+                    if (saturn::take_pick(got)) {
                         cfg.disc_root = got;
                         rescan();
                         saturn::save_app_config(cfg_path, cfg);
@@ -1145,6 +1179,9 @@ int main(int argc, char **argv)
                 }
                 ImGui::Separator();
                 if (ImGui::Button("Back to the shelf", bw)) {
+                    /* Written here too, not only at exit: an app that is
+                     * force-quit should not forget the clock. */
+                    ymir_bridge_save_smpc_state(ymir, smpc_path.c_str());
                     running_view = false;
                     show_pause = false;
                 }
@@ -1172,6 +1209,8 @@ int main(int argc, char **argv)
     }
 
     saturn::save_app_config(cfg_path, cfg);
+    /* The clock and the language, so the BIOS does not ask again. */
+    ymir_bridge_save_smpc_state(ymir, smpc_path.c_str());
     if (frame) SDL_DestroyTexture(frame);
     for (SDL_Gamepad *g : pads) if (g) SDL_CloseGamepad(g);
     ymir_bridge_destroy(ymir);
