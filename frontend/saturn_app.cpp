@@ -2142,14 +2142,25 @@ int main(int argc, char **argv)
                 else
                     ImGui::Dummy(ImVec2(cwid, ch));
 
-                /* Under the console, under its ports. */
-                const float ph = std::max(stage_h - ch - ImGui::GetStyle().ItemSpacing.y,
+                /*
+                 * Under the console, under its ports -- and changeable there.
+                 *
+                 * What is plugged in is part of the picture of the machine, so
+                 * the place it is shown is the place to change it. Arrows
+                 * rather than a menu: there are seven peripherals, the list
+                 * never grows while you look at it, and stepping is quicker
+                 * than opening something and reading it.
+                 */
+                const float sel_h = ImGui::GetFrameHeightWithSpacing();
+                const float ph = std::max(stage_h - ch - sel_h
+                                              - ImGui::GetStyle().ItemSpacing.y,
                                           ImGui::GetFrameHeight() * 0.8f);
                 const float half_w = (cwid - ImGui::GetStyle().ItemSpacing.x) * 0.5f;
                 for (int which = 1; which <= 2; ++which) {
-                    const saturn::Peripheral p = (which == 1) ? cfg.machine.port1
-                                                              : cfg.machine.port2;
+                    saturn::Peripheral &p = (which == 1) ? cfg.machine.port1
+                                                         : cfg.machine.port2;
                     if (which == 2) ImGui::SameLine();
+                    ImGui::BeginGroup();
                     const ImVec2 at = ImGui::GetCursorScreenPos();
                     ImGui::Dummy(ImVec2(half_w, ph));
                     int aw = 0, ah = 0;
@@ -2174,6 +2185,33 @@ int main(int argc, char **argv)
                         dl->AddRectFilled(a, b, IM_COL32(10, 11, 16, 255), 3.0f);
                         dl->AddRect(a, b, IM_COL32(64, 72, 94, 220), 3.0f);
                     }
+
+                    /* ‹ name › under the socket it belongs to. */
+                    ImGui::PushID(which);
+                    const int last = (int)saturn::Peripheral::ShuttleMouse;
+                    auto step = [&](int by) {
+                        p = (saturn::Peripheral)(((int)p + by + last + 1) % (last + 1));
+                        apply_ports();
+                        saturn::save_app_config(cfg_path, cfg);
+                    };
+                    const float arrow = ImGui::GetFrameHeight();
+                    if (ImGui::ArrowButton("##prev", ImGuiDir_Left)) step(-1);
+                    ImGui::SameLine();
+                    /* Centred in what is left, so the row does not shuffle
+                     * about as the name changes length. */
+                    const char *nm = saturn::peripheral_name(p);
+                    const float band = std::max(half_w - arrow * 2.0f
+                                                    - ImGui::GetStyle().ItemSpacing.x * 2.0f,
+                                                ImGui::GetFontSize());
+                    const float tw = ImGui::CalcTextSize(nm).x;
+                    const float here = ImGui::GetCursorPosX();
+                    ImGui::SetCursorPosX(here + std::max(0.0f, (band - tw) * 0.5f));
+                    ImGui::TextUnformatted(nm);
+                    ImGui::SameLine();
+                    ImGui::SetCursorPosX(here + band + ImGui::GetStyle().ItemSpacing.x);
+                    if (ImGui::ArrowButton("##next", ImGuiDir_Right)) step(+1);
+                    ImGui::PopID();
+                    ImGui::EndGroup();
                 }
                 ImGui::EndGroup();
 
