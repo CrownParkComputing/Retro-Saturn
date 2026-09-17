@@ -63,9 +63,13 @@ ANDROID = {"mdpi": 48, "hdpi": 72, "xhdpi": 96, "xxhdpi": 144, "xxxhdpi": 192}
 # originals are ~1.8MB each and there is no reason to ship that to draw a
 # thumbnail with.
 HARDWARE = {
-    "console.png":     640,   # the drive panel: this is the machine itself
-    "control-pad.png": 320,   # the ports strip, one per socket
-    "virtua-gun.png":  320,
+    "console.png":       640,   # the drive panel: this is the machine itself
+    "control-pad.png":   320,   # the ports strip, one per socket
+    "analog-pad.png":    320,
+    "arcade-racer.png":  320,
+    "mission-stick.png": 320,
+    "virtua-gun.png":    320,
+    "shuttle-mouse.png": 320,
 }
 
 PANEL_BG = (14, 16, 23)       # matches SDL_SetRenderDrawColor in saturn_app.cpp
@@ -90,13 +94,79 @@ def on_panel(img):
     return img
 
 
+def flatten(img):
+    """One opaque RGB image, whatever the master arrived as.
+
+    Some of these come with real alpha and some come with the transparency
+    CHECKERBOARD painted into them -- an editor's backdrop saved as picture
+    data. Both mean "there is nothing here", and both have to end up as panel
+    colour or the tile shows a grey chessboard on the interface.
+    """
+    if "A" in img.getbands():
+        flat = Image.new("RGB", img.size, PANEL_BG)
+        flat.paste(img.convert("RGBA"), mask=img.convert("RGBA").split()[-1])
+        return flat
+    return img.convert("RGB")
+
+
+def dekey(img, light=180, grey=24):
+    """Remove a painted-in checkerboard by flooding from the edges.
+
+    Keying every light, colourless pixel would also take the white lettering
+    on the hardware -- MISSION STICK, SEGA SATURN, the axis diagrams -- and
+    punch holes through the middle of the product. The backdrop is the part
+    that is CONNECTED TO THE EDGE of the frame; the lettering is enclosed by
+    black plastic and is never reached. So this floods inward from the border
+    and stops where the hardware starts.
+
+    A master with a dark backdrop has no light pixels at its corners, the
+    flood begins nowhere and this does nothing, which is why it is safe to
+    run over all of them.
+    """
+    from collections import deque
+
+    w, h = img.size
+    px = img.load()
+
+    def is_backdrop(x, y):
+        r, g, b = px[x, y]
+        return min(r, g, b) > light and max(r, g, b) - min(r, g, b) < grey
+
+    seen = bytearray(w * h)
+    q = deque()
+    for x in range(w):
+        for y in (0, h - 1):
+            if not seen[y * w + x] and is_backdrop(x, y):
+                seen[y * w + x] = 1; q.append((x, y))
+    for y in range(h):
+        for x in (0, w - 1):
+            if not seen[y * w + x] and is_backdrop(x, y):
+                seen[y * w + x] = 1; q.append((x, y))
+
+    n = 0
+    while q:
+        x, y = q.popleft()
+        px[x, y] = PANEL_BG
+        n += 1
+        for nx, ny in ((x - 1, y), (x + 1, y), (x, y - 1), (x, y + 1)):
+            if 0 <= nx < w and 0 <= ny < h and not seen[ny * w + nx] \
+                    and is_backdrop(nx, ny):
+                seen[ny * w + nx] = 1
+                q.append((nx, ny))
+    return img, n
+
+
 def hardware(art):
     for name, width in HARDWARE.items():
         src = os.path.join(HERE, "store", "art", name)
         if not os.path.exists(src):
             print("hardware: no %s, skipped" % name)
             continue
-        im = Image.open(src).convert("RGB")
+        im = flatten(Image.open(src))
+        im, keyed = dekey(im)
+        if keyed:
+            print("hardware: %s had a painted-in backdrop, %d px keyed out"
+                  % (name, keyed))
         im = im.crop(content_box(im, threshold=150, pad=24))
         h = round(im.height * width / im.width)
         im = on_panel(im.resize((width, h), Image.LANCZOS))

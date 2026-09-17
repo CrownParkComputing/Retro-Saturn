@@ -504,6 +504,21 @@ void pad_press(YmirInstance *ymir, int port, YmirButton button,
  */
 int main(int argc, char **argv)
 {
+    /*
+     * Landscape, and only landscape.
+     *
+     * The manifest already asks for sensorLandscape, and on its own that is
+     * not enough: SDL tells the activity which orientations it wants when the
+     * window is created, and for a RESIZABLE window with no hint set it asks
+     * for UNSPECIFIED -- which overrides the manifest and lets the device
+     * rotate into portrait. A Saturn picture is 4:3 and every screen in this
+     * application is laid out across; turned on its side it is unusable.
+     *
+     * Both landscapes, not one: a handheld held either way up is still a
+     * handheld, and people do hold them either way up.
+     */
+    SDL_SetHint(SDL_HINT_ORIENTATIONS, "LandscapeLeft LandscapeRight");
+
     if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_GAMEPAD)) {
         SDL_Log("SDL_Init: %s", SDL_GetError());
         return 1;
@@ -1017,32 +1032,44 @@ int main(int argc, char **argv)
      * peripherals go on the ports, so what is plugged into the Saturn is
      * something you recognise at a glance rather than something you read. */
     SDL_Texture *art_console = nullptr; int art_console_w = 0, art_console_h = 0;
-    SDL_Texture *art_pad     = nullptr; int art_pad_w = 0, art_pad_h = 0;
-    SDL_Texture *art_gun     = nullptr; int art_gun_w = 0, art_gun_h = 0;
 
-    /* Which photograph belongs to a socket. Anything without one of its own
-     * borrows the pad, which is what all of them are shaped like. */
     /*
-     * Only the photographs we actually have.
+     * A photograph per socket, indexed by what is plugged into it.
      *
-     * This used to answer "the Control Pad" for everything that was not a
-     * gun, so stepping from Control Pad to 3D Control Pad to Arcade Racer to
-     * Shuttle Mouse showed the same picture every time -- the graphic never
-     * appeared to change, and worse, a Shuttle Mouse was illustrated with a
-     * photograph of a pad. There are three renders in this application; a
-     * peripheral without one gets a plate with its name on, which is honest
-     * and still tells you the port is occupied.
+     * A table rather than a variable each, because the question "which
+     * picture is this peripheral's" then has exactly one answer and adding a
+     * render is one filename in one place. It was a switch, and the switch
+     * answered "the Control Pad" for everything that was not a gun -- so the
+     * picture never changed as you stepped through the ports, and a Shuttle
+     * Mouse was illustrated with a photograph of a pad.
+     *
+     * Every peripheral the Saturn has now has its own render; the only null
+     * is the empty socket, which is drawn rather than photographed. If one
+     * ever fails to load, that port falls back to a plate with the device's
+     * name on it -- honest, and it still tells you the port is taken.
      */
+    struct Photo { SDL_Texture *tex = nullptr; int w = 0, h = 0; };
+    static const char *const kPeriphArt[] = {
+        nullptr,             /* None -- an empty socket is drawn, not photographed */
+        "control-pad.png",   /* ControlPad */
+        "analog-pad.png",    /* AnalogPad */
+        "arcade-racer.png",  /* ArcadeRacer */
+        "mission-stick.png", /* MissionStick */
+        "virtua-gun.png",    /* VirtuaGun */
+        "shuttle-mouse.png", /* ShuttleMouse */
+    };
+    static_assert(sizeof(kPeriphArt) / sizeof(kPeriphArt[0]) ==
+                      (size_t)saturn::Peripheral::ShuttleMouse + 1,
+                  "a peripheral was added without saying what it looks like");
+    Photo art_periph[sizeof(kPeriphArt) / sizeof(kPeriphArt[0])];
+
     auto art_for = [&](saturn::Peripheral p, int *w, int *h) -> SDL_Texture * {
-        *w = 0; *h = 0;
-        switch (p) {
-        case saturn::Peripheral::ControlPad:
-            *w = art_pad_w; *h = art_pad_h; return art_pad;
-        case saturn::Peripheral::VirtuaGun:
-            *w = art_gun_w; *h = art_gun_h; return art_gun;
-        default:
-            return nullptr;
+        const size_t i = (size_t)p;
+        if (i >= sizeof(art_periph) / sizeof(art_periph[0])) {
+            *w = 0; *h = 0; return nullptr;
         }
+        *w = art_periph[i].w; *h = art_periph[i].h;
+        return art_periph[i].tex;
     };
     {
         const std::string base = asset_base();
@@ -1050,10 +1077,11 @@ int main(int argc, char **argv)
                         &logo_w, &logo_h);
         art_console = load_png(ren, (base + "assets/console.png").c_str(),
                                &art_console_w, &art_console_h);
-        art_pad = load_png(ren, (base + "assets/control-pad.png").c_str(),
-                           &art_pad_w, &art_pad_h);
-        art_gun = load_png(ren, (base + "assets/virtua-gun.png").c_str(),
-                           &art_gun_w, &art_gun_h);
+        for (size_t i = 0; i < sizeof(art_periph) / sizeof(art_periph[0]); ++i) {
+            if (!kPeriphArt[i]) continue;
+            art_periph[i].tex = load_png(ren, (base + "assets/" + kPeriphArt[i]).c_str(),
+                                         &art_periph[i].w, &art_periph[i].h);
+        }
     }
 
     /* ---- the picture ---- */
@@ -3823,8 +3851,8 @@ int main(int argc, char **argv)
     if (logo) SDL_DestroyTexture(logo);
     for (auto &kv : art) if (kv.second.tex) SDL_DestroyTexture(kv.second.tex);
     if (art_console) SDL_DestroyTexture(art_console);
-    if (art_pad) SDL_DestroyTexture(art_pad);
-    if (art_gun) SDL_DestroyTexture(art_gun);
+    for (Photo &a : art_periph)
+        if (a.tex) SDL_DestroyTexture(a.tex);
     for (SDL_Gamepad *g : pads) if (g) SDL_CloseGamepad(g);
     ymir_bridge_destroy(ymir);
     ImGui_ImplSDLRenderer3_Shutdown();
