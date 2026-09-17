@@ -40,79 +40,14 @@ jobs:
       - run: flutter test
         working-directory: flutter_app
 
-  android:
-    needs: analyze
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          submodules: recursive
-      - uses: subosito/flutter-action@v2
-        with:
-          channel: stable
-          flutter-version: ${{ env.FLUTTER_VERSION }}
-      # packages: '' or the action tries to install the obsolete "tools"
-      # package, which was withdrawn from the SDK repository -- sdkmanager
-      # exits 1 with "Failed to find package 'tools'" and the job dies before
-      # it has built anything. Each job below installs what it actually needs.
-      - uses: android-actions/setup-android@v3
-        with:
-          packages: ''
-      - name: Build Android arm64-v8a .so
-        run: core/retro/android/build.sh
-        env:
-          ANDROID_NDK_HOME: ${{ steps.setup-android.outputs.ndk-path }}
-          # The core repository has no idea where this app keeps its jniLibs,
-          # so it defaults to its own retro/android/prebuilt and lets the
-          # consumer say. Without this the next step's `test -f` fails on a
-          # core that built perfectly well.
-          JNI_LIBS_DIR: ${{ github.workspace }}/flutter_app/android/app/src/main/jniLibs/arm64-v8a
-      - run: |
-          test -f flutter_app/android/app/src/main/jniLibs/arm64-v8a/libymircore.so
-      # Signed with the release key, not the debug one.
-      #
-      # This job used to build the bundle with no keystore at all, which
-      # produces an artefact that installs on a dev device and is refused by
-      # Play -- the release key is what identifies this as an update to
-      # com.crownpark.ymir_multiplatform rather than a different app. The
-      # secrets have been on this repo since June; nothing was reading them.
-      #
-      # build.gradle.kts picks the keystore up from these ANDROID_* env vars
-      # and falls back to the debug key when they are absent, so a fork
-      # without the secrets still gets a green build rather than a failure it
-      # cannot fix.
-      - name: Decode signing keystore
-        env:
-          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
-        run: |
-          mkdir -p "$RUNNER_TEMP/signing"
-          echo "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/signing/release.jks"
-
-      - run: flutter build appbundle --release
-        working-directory: flutter_app
-        env:
-          ANDROID_KEYSTORE_PATH: ${{ runner.temp }}/signing/release.jks
-          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
-          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
-          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
-
-      # The bundle has to be signed as the app it replaces: a different key is
-      # a different app as far as the Console is concerned, and this is the
-      # cheap place to catch that rather than at upload.
-      - name: Print signing fingerprint
-        run: |
-          keytool -printcert -jarfile \
-            flutter_app/build/app/outputs/bundle/release/app-release.aab \
-            | grep -E "SHA256:|Owner:" || true
-      - uses: actions/upload-artifact@v4
-        with:
-          name: android-aab
-          path: flutter_app/build/app/outputs/bundle/release/app-release.aab
-
   # ------------------------------------------------------------------
   # The native app: SDL3 + Dear ImGui over libymircore, which is what
-  # Retro-Saturn now is. The Flutter job above builds the interface this
-  # replaces and stays until that one is retired.
+  # Retro-Saturn IS. There was a second job here that built the Flutter shell
+  # this replaced; it is gone. It had been failing for weeks on an iconv the
+  # old core script does not pin an API level for, and worse, it uploaded an
+  # artifact called android-aab -- a signed bundle of the interface we no
+  # longer ship, sitting next to the one we do. Two bundles in one run is a
+  # way to release the wrong one.
   #
   # It is here rather than on a developer machine for one reason: the upload
   # key exists only as a secret on this repository. GitHub secrets cannot be
