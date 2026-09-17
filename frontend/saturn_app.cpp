@@ -59,6 +59,8 @@ extern "C" {
 #include <cstdio>
 #include <algorithm>
 #include <cstring>
+#include <map>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -798,6 +800,21 @@ int main(int argc, char **argv)
     SDL_strlcpy(media_email, media_email_prefill.c_str(), sizeof media_email);
     if (saturn::media_available()) saturn::media_begin_status();
 
+    /*
+     * Cover art, fetched as it is needed and kept as textures.
+     *
+     * A catalogue of two hundred and fifty titles is two hundred and fifty
+     * requests if you ask for all of them at once, so art is asked for only
+     * for the cards actually on screen, a few at a time, and remembered once
+     * it arrives. `asked` is separate from the texture map on purpose: a title
+     * with no artwork at all must be asked about once and then left alone,
+     * not retried every frame for as long as the page is open.
+     */
+    struct Art { SDL_Texture *tex = nullptr; int w = 0, h = 0; };
+    std::map<std::string, Art> art;
+    std::set<std::string> art_asked;
+    int art_in_flight = 0;
+
     auto refresh_catalogue = [&] {
         media_busy = true;
         const char one[2] = { media_letter, 0 };
@@ -1443,7 +1460,9 @@ int main(int argc, char **argv)
             const float ports_row  = std::max(ImGui::GetFrameHeightWithSpacing(),
                                               port_art_h + ImGui::GetStyle().ItemSpacing.y);
             const float ports_h = ports_row + ImGui::GetStyle().WindowPadding.y * 3.0f;
-            const float body_h  = -(ports_h + ImGui::GetStyle().ItemSpacing.y);
+            const float body_h  = 0.0f;   /* the sockets are in the header now */
+            bool  ports_in_header = false;
+            float ports_want = 0.0f;
 
             /* Big enough for the machine to be a photograph of a machine
              * rather than an icon of one, and never so big that the shelf
@@ -1487,6 +1506,86 @@ int main(int argc, char **argv)
                 ImGui::SameLine();
             }
             ImGui::BeginChild("##right", ImVec2(0, body_h));
+
+            /* The sockets live in the header now, beside the machine they
+             * belong to -- they are part of the console, not a status bar. */
+            /* Wide enough for two arrows, a photograph and the longest name
+             * in the list, measured rather than guessed -- at eleven ems
+             * "Control Pad" came out as "Control Pa" and one arrow fell off
+             * the end. */
+            const float half = std::max(ImGui::CalcTextSize("3D Control Pad").x +
+                                        ImGui::GetFrameHeight() * 2.0f +
+                                        port_art_h * 1.6f +
+                                        ImGui::GetStyle().ItemSpacing.x * 4.0f,
+                                        ImGui::GetFontSize() * 12.0f);
+        /*
+             * A socket, with arrows rather than a drop-down.
+             *
+             * There are seven peripherals and the list never grows while
+             * you look at it, so stepping through them is quicker than
+             * opening a menu, reading it and picking -- and on a handheld
+             * it is a shoulder button rather than a pointer. The caption
+             * is gone: the picture says what is plugged in better than the
+             * words "PORT 1" ever did, and left is the left socket.
+             */
+            auto port = [&](const char *id, saturn::Peripheral &p, float box_h) {
+                ImGui::BeginChild((std::string("##box") + id).c_str(),
+                                  ImVec2(half, box_h));
+                const int last = (int)saturn::Peripheral::ShuttleMouse;
+                auto step = [&](int by) {
+                    int v = ((int)p + by + (last + 1)) % (last + 1);
+                    p = (saturn::Peripheral)v;
+                    apply_ports();
+                    saturn::save_app_config(cfg_path, cfg);
+                };
+
+                const float arrow = ImGui::GetFrameHeight();
+                /* The row is the box when the box says how tall it is -- the
+                 * header stacks two of these in the space one used to have. */
+                const float row = box_h > 0.0f
+                                ? std::min(port_art_h,
+                                           box_h - ImGui::GetStyle().WindowPadding.y * 2.0f)
+                                : port_art_h;
+                const float top = ImGui::GetCursorPosY();
+                ImGui::SetCursorPosY(top + (row - arrow) * 0.5f);
+                ImGui::PushID(id);
+                if (ImGui::ArrowButton("##prev", ImGuiDir_Left)) step(-1);
+                ImGui::SameLine();
+
+                int aw = 0, ah = 0;
+                float used = arrow * 2.0f + ImGui::GetStyle().ItemSpacing.x * 3.0f;
+                /* Same bargain as the header: on a narrow screen the name
+                 * of the device matters more than a picture of it, and
+                 * both together left "Control Pad" reading "Control". */
+                SDL_Texture *ptex = (narrow || shortscr) ? nullptr
+                                                         : art_for(p, &aw, &ah);
+                if (SDL_Texture *tex = ptex) {
+                    const float w = row * (float)aw / (float)ah;
+                    ImGui::SetCursorPosY(top);
+                    ImGui::Image((ImTextureID)(intptr_t)tex, ImVec2(w, row));
+                    ImGui::SameLine();
+                    used += w + ImGui::GetStyle().ItemSpacing.x;
+                }
+
+                /* The name, centred in whatever is left between the
+                 * arrows, so it does not jump about as the word changes
+                 * length. */
+                const float name_w = std::max(ImGui::GetFontSize() * 4.0f,
+                                              half - used);
+                const char *name = saturn::peripheral_name(p);
+                const float tw = ImGui::CalcTextSize(name).x;
+                const float here = ImGui::GetCursorPosX();
+                ImGui::SetCursorPosY(top + (row - ImGui::GetTextLineHeight()) * 0.5f);
+                ImGui::SetCursorPosX(here + std::max(0.0f, (name_w - tw) * 0.5f));
+                ImGui::TextUnformatted(name);
+
+                ImGui::SameLine();
+                ImGui::SetCursorPosX(here + name_w);
+                ImGui::SetCursorPosY(top + (row - arrow) * 0.5f);
+                if (ImGui::ArrowButton("##next", ImGuiDir_Right)) step(+1);
+                ImGui::PopID();
+                ImGui::EndChild();
+            };
 
             /* ============ the machine, and what is in it ============ */
             ImGui::BeginChild("##drive", ImVec2(0, head_h), ImGuiChildFlags_Borders);
@@ -1554,7 +1653,31 @@ int main(int argc, char **argv)
                     ImGui::SameLine();
                 }
 
-                ImGui::BeginGroup();
+                /*
+                 * The room for the sockets is taken out of the line BEFORE
+                 * the disc's name is written into it, not after.
+                 *
+                 * Asking what was left once the name had already been drawn
+                 * gave a position measured from the start of the next line,
+                 * and the sockets landed on top of the title.
+                 */
+                /*
+                 * One above the other, not side by side.
+                 *
+                 * Two sockets across the header wanted more width than the
+                 * band had once the machine and the disc had taken theirs, so
+                 * they dropped out to a strip underneath -- which is not what
+                 * "next to the Saturn" means. Stacked they need half as much
+                 * width, and the header is tall enough for both.
+                 */
+                ports_want = half + ImGui::GetStyle().ItemSpacing.x * 2.0f;
+                ports_in_header = ImGui::GetContentRegionAvail().x >
+                                  ports_want + ImGui::GetFontSize() * 9.0f;
+                const float info_w = ports_in_header
+                                   ? ImGui::GetContentRegionAvail().x - ports_want
+                                   : 0.0f;
+
+                ImGui::BeginChild("##info", ImVec2(info_w, h));
                 ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.42f, 0.71f, 0.97f, 1.0f));
                 ImGui::TextUnformatted(loaded_title.empty() ? "NO DISC"
                                                             : loaded_title.c_str());
@@ -1602,9 +1725,32 @@ int main(int argc, char **argv)
                         ImGui::PopID();
                     }
                 }
-                ImGui::EndGroup();
+                ImGui::EndChild();
+
+                /* And the two sockets at the right-hand end, because they are
+                 * part of the console and not a status bar along the bottom
+                 * of the application. */
+                if (ports_in_header) {
+                    ImGui::SameLine();
+                    ImGui::BeginGroup();
+                    const float each = (h - ImGui::GetStyle().ItemSpacing.y) * 0.5f;
+                    port("p1", cfg.machine.port1, each);
+                    port("p2", cfg.machine.port2, each);
+                    ImGui::EndGroup();
+                }
             }
             ImGui::EndChild();
+
+            /* Not enough width up there for the sockets: they go under the
+             * machine instead, which is still nearer to it than the bottom of
+             * the window was. */
+            if (!ports_in_header) {
+                ImGui::BeginChild("##ports", ImVec2(0, ports_h), ImGuiChildFlags_Borders);
+                port("p1", cfg.machine.port1, 0.0f);
+                ImGui::SameLine(0.0f, ImGui::GetStyle().ItemSpacing.x * 2.0f);
+                port("p2", cfg.machine.port2, 0.0f);
+                ImGui::EndChild();
+            }
 
             ImGui::Spacing();
 
@@ -1722,6 +1868,16 @@ int main(int argc, char **argv)
                 ImGui::SameLine();
                 if (ImGui::Button("Search")) refresh_catalogue();
                 ImGui::SameLine();
+                if (ImGui::Button("Refresh")) {
+                    /* Forget the art as well as the list: a cover that failed
+                     * once is otherwise never asked for again. */
+                    for (auto &kv : art) if (kv.second.tex) SDL_DestroyTexture(kv.second.tex);
+                    art.clear();
+                    art_asked.clear();
+                    art_in_flight = 0;
+                    refresh_catalogue();
+                }
+                ImGui::SameLine();
                 TextDim(media_busy ? "working..." : "%zu title%s", catalogue.size(),
                         catalogue.size() == 1 ? "" : "s");
 
@@ -1750,21 +1906,97 @@ int main(int argc, char **argv)
                     TextDim("%s", media_message.c_str());
                 }
 
+                /*
+                 * A grid of covers, not a list of lines.
+                 *
+                 * Two hundred and fifty rows of text is a spreadsheet, and
+                 * nobody recognises a game from its name in a column. The
+                 * cards are sized off the text so they grow with the font and
+                 * the display, and the art is asked for lazily as they come
+                 * into view.
+                 */
                 ImGui::BeginChild("##dl");
-                for (size_t i = 0; i < catalogue.size(); ++i) {
-                    const saturn::MediaGame &g = catalogue[i];
-                    ImGui::PushID((int)i);
-                    ImGui::TextUnformatted(g.title.c_str());
-                    ImGui::SameLine(fw * 0.56f);
-                    if (g.bytes > 0) TextDim("%.0f MB", (double)g.bytes / 1048576.0);
-                    else             TextDim("%d file%s", g.rom_files,
-                                             g.rom_files == 1 ? "" : "s");
-                    ImGui::SameLine(fw * 0.80f);
-                    ImGui::BeginDisabled(!prog.empty() || cfg.disc_root.empty());
-                    if (ImGui::SmallButton("Download"))
-                        saturn::media_begin_download(g.slug, cfg.disc_root);
-                    ImGui::EndDisabled();
-                    ImGui::PopID();
+                {
+                    const float card_w = em * 9.0f;
+                    const float cover_h = card_w * 1.35f;
+                    const float step = card_w + ImGui::GetStyle().ItemSpacing.x;
+                    const float wide = ImGui::GetContentRegionAvail().x;
+                    int per_row = std::max(1, (int)(wide / step));
+                    int budget = 3;          /* new requests allowed this frame */
+
+                    for (size_t i = 0; i < catalogue.size(); ++i) {
+                        const saturn::MediaGame &g = catalogue[i];
+                        if ((int)(i % per_row) != 0) ImGui::SameLine();
+                        ImGui::PushID((int)i);
+                        ImGui::BeginGroup();
+
+                        /* Ask for the art the first time this card is drawn,
+                         * and only while there is room in the queue. */
+                        auto it = art.find(g.slug);
+                        if (it == art.end() && budget > 0 && art_in_flight < 4 &&
+                            !g.preview.empty() &&
+                            art_asked.find(g.slug) == art_asked.end()) {
+                            art_asked.insert(g.slug);
+                            art_in_flight++;
+                            budget--;
+                            saturn::media_begin_artwork(g.slug, g.preview);
+                        }
+
+                        const ImVec2 at = ImGui::GetCursorScreenPos();
+                        if (it != art.end() && it->second.tex) {
+                            /* Fitted inside the cover box, whatever shape the
+                             * artwork turned out to be. */
+                            const Art &a = it->second;
+                            float w = card_w, h = w * (float)a.h / (float)a.w;
+                            if (h > cover_h) { h = cover_h; w = h * (float)a.w / (float)a.h; }
+                            ImGui::Dummy(ImVec2(card_w, cover_h));
+                            ImGui::GetWindowDrawList()->AddImage(
+                                (ImTextureID)(intptr_t)a.tex,
+                                ImVec2(at.x + (card_w - w) * 0.5f,
+                                       at.y + (cover_h - h) * 0.5f),
+                                ImVec2(at.x + (card_w + w) * 0.5f,
+                                       at.y + (cover_h + h) * 0.5f));
+                        } else {
+                            /* A plate where the cover will be, so the grid
+                             * does not reflow as art arrives. */
+                            ImGui::Dummy(ImVec2(card_w, cover_h));
+                            ImDrawList *dl = ImGui::GetWindowDrawList();
+                            dl->AddRectFilled(at, ImVec2(at.x + card_w, at.y + cover_h),
+                                              IM_COL32(28, 32, 44, 255), 4.0f);
+                            dl->AddRect(at, ImVec2(at.x + card_w, at.y + cover_h),
+                                        IM_COL32(60, 70, 92, 255), 4.0f);
+                        }
+
+                        /*
+                         * The title in a box of a fixed two lines.
+                         *
+                         * Left to wrap freely, a three-line title made its
+                         * card taller than its neighbours, and since a row is
+                         * as tall as its tallest card the whole grid went
+                         * ragged and the Download buttons stopped lining up.
+                         * Two lines is enough for nearly everything and the
+                         * rest is elided rather than allowed to push.
+                         */
+                        ImGui::BeginChild((std::string("t") + std::to_string(i)).c_str(),
+                                          ImVec2(card_w, ImGui::GetTextLineHeight() * 2.2f));
+                        ImGui::PushTextWrapPos(card_w);
+                        ImGui::TextUnformatted(g.title.c_str());
+                        ImGui::PopTextWrapPos();
+                        if (ImGui::IsWindowHovered()) ImGui::SetTooltip("%s", g.title.c_str());
+                        ImGui::EndChild();
+
+                        if (g.bytes > 0) TextDim("%.0f MB", (double)g.bytes / 1048576.0);
+                        else             TextDim("%d file%s", g.rom_files,
+                                                 g.rom_files == 1 ? "" : "s");
+
+                        ImGui::BeginDisabled(!prog.empty() || cfg.disc_root.empty());
+                        if (ImGui::Button("Download", ImVec2(card_w, 0)))
+                            saturn::media_begin_download(g.slug, cfg.disc_root);
+                        ImGui::EndDisabled();
+
+                        ImGui::EndGroup();
+                        ImGui::PopID();
+                    }
                 }
                 ImGui::EndChild();
             }
@@ -2259,91 +2491,6 @@ int main(int argc, char **argv)
 
             ImGui::EndChild();     /* ##right */
 
-            /* ============ the ports, along the bottom ============ */
-            ImGui::Spacing();
-            ImGui::BeginChild("##ports", ImVec2(0, ports_h), ImGuiChildFlags_Borders);
-            {
-                const float half = (ImGui::GetContentRegionAvail().x -
-                                    ImGui::GetStyle().ItemSpacing.x * 4.0f) * 0.5f;
-                /*
-                 * A socket, with arrows rather than a drop-down.
-                 *
-                 * There are seven peripherals and the list never grows while
-                 * you look at it, so stepping through them is quicker than
-                 * opening a menu, reading it and picking -- and on a handheld
-                 * it is a shoulder button rather than a pointer. The caption
-                 * is gone: the picture says what is plugged in better than the
-                 * words "PORT 1" ever did, and left is the left socket.
-                 */
-                auto port = [&](const char *id, saturn::Peripheral &p) {
-                    ImGui::BeginChild((std::string("##box") + id).c_str(),
-                                      ImVec2(half, 0));
-                    const int last = (int)saturn::Peripheral::ShuttleMouse;
-                    auto step = [&](int by) {
-                        int v = ((int)p + by + (last + 1)) % (last + 1);
-                        p = (saturn::Peripheral)v;
-                        apply_ports();
-                        saturn::save_app_config(cfg_path, cfg);
-                    };
-
-                    const float arrow = ImGui::GetFrameHeight();
-                    const float top = ImGui::GetCursorPosY();
-                    ImGui::SetCursorPosY(top + (port_art_h - arrow) * 0.5f);
-                    ImGui::PushID(id);
-                    if (ImGui::ArrowButton("##prev", ImGuiDir_Left)) step(-1);
-                    ImGui::SameLine();
-
-                    int aw = 0, ah = 0;
-                    float used = arrow * 2.0f + ImGui::GetStyle().ItemSpacing.x * 3.0f;
-                    /* Same bargain as the header: on a narrow screen the name
-                     * of the device matters more than a picture of it, and
-                     * both together left "Control Pad" reading "Control". */
-                    SDL_Texture *ptex = (narrow || shortscr) ? nullptr
-                                                             : art_for(p, &aw, &ah);
-                    if (SDL_Texture *tex = ptex) {
-                        const float w = port_art_h * (float)aw / (float)ah;
-                        ImGui::SetCursorPosY(top);
-                        ImGui::Image((ImTextureID)(intptr_t)tex, ImVec2(w, port_art_h));
-                        ImGui::SameLine();
-                        used += w + ImGui::GetStyle().ItemSpacing.x;
-                    }
-
-                    /* The name, centred in whatever is left between the
-                     * arrows, so it does not jump about as the word changes
-                     * length. */
-                    const float name_w = std::max(ImGui::GetFontSize() * 4.0f,
-                                                  half - used);
-                    const char *name = saturn::peripheral_name(p);
-                    const float tw = ImGui::CalcTextSize(name).x;
-                    const float here = ImGui::GetCursorPosX();
-                    ImGui::SetCursorPosY(top + (port_art_h - ImGui::GetTextLineHeight()) * 0.5f);
-                    ImGui::SetCursorPosX(here + std::max(0.0f, (name_w - tw) * 0.5f));
-                    ImGui::TextUnformatted(name);
-
-                    ImGui::SameLine();
-                    ImGui::SetCursorPosX(here + name_w);
-                    ImGui::SetCursorPosY(top + (port_art_h - arrow) * 0.5f);
-                    if (ImGui::ArrowButton("##next", ImGuiDir_Right)) step(+1);
-                    ImGui::PopID();
-                    ImGui::EndChild();
-                };
-                port("p1", cfg.machine.port1);
-                ImGui::SameLine();
-                /* A rule between them, because otherwise port one's "next"
-                 * arrow and port two's "previous" arrow sit side by side in
-                 * the middle of the strip looking like a pair. */
-                ImGui::SameLine(0.0f, ImGui::GetStyle().ItemSpacing.x);
-                {
-                    const ImVec2 p = ImGui::GetCursorScreenPos();
-                    ImGui::GetWindowDrawList()->AddLine(
-                        ImVec2(p.x, p.y),
-                        ImVec2(p.x, p.y + ImGui::GetContentRegionAvail().y),
-                        ImGui::GetColorU32(ImGuiCol_Separator), 1.0f);
-                }
-                ImGui::SameLine(0.0f, ImGui::GetStyle().ItemSpacing.x * 2.0f);
-                port("p2", cfg.machine.port2);
-            }
-            ImGui::EndChild();
             ImGui::End();
         }
 
@@ -2578,6 +2725,23 @@ int main(int argc, char **argv)
                 case saturn::MediaOp::Catalogue:
                     if (mr.ok) catalogue = mr.games;
                     break;
+                case saturn::MediaOp::Artwork: {
+                    if (art_in_flight > 0) art_in_flight--;
+                    if (!mr.ok) break;
+                    int w = 0, h = 0;
+                    std::vector<unsigned char> rgba;
+                    if (!saturn::media_read_art(mr.art.path, w, h, rgba)) break;
+                    SDL_Texture *t = SDL_CreateTexture(ren, SDL_PIXELFORMAT_ABGR8888,
+                                                       SDL_TEXTUREACCESS_STATIC, w, h);
+                    if (!t) break;
+                    SDL_SetTextureBlendMode(t, SDL_BLENDMODE_BLEND);
+                    SDL_SetTextureScaleMode(t, SDL_SCALEMODE_LINEAR);
+                    SDL_UpdateTexture(t, nullptr, rgba.data(), w * 4);
+                    Art &a = art[mr.art.slug];
+                    if (a.tex) SDL_DestroyTexture(a.tex);
+                    a.tex = t; a.w = w; a.h = h;
+                    break;
+                }
                 case saturn::MediaOp::Download:
                     if (mr.ok) rescan();      /* it is a disc on the shelf now */
                     break;
@@ -2642,6 +2806,7 @@ int main(int argc, char **argv)
     ymir_bridge_save_smpc_state(ymir, smpc_path.c_str());
     if (frame) SDL_DestroyTexture(frame);
     if (logo) SDL_DestroyTexture(logo);
+    for (auto &kv : art) if (kv.second.tex) SDL_DestroyTexture(kv.second.tex);
     if (art_console) SDL_DestroyTexture(art_console);
     if (art_pad) SDL_DestroyTexture(art_pad);
     if (art_gun) SDL_DestroyTexture(art_gun);
