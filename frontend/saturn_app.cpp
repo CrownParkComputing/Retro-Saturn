@@ -59,6 +59,7 @@ extern "C" {
 #include "ymir_bridge.h"
 }
 
+#include <array>
 #include <cstdarg>
 #include <cstdio>
 #include <algorithm>
@@ -224,9 +225,9 @@ SDL_Texture *load_png(SDL_Renderer *ren, const char *path, int *out_w, int *out_
  * navigations stacked on top of each other to reach one page. The rail is the
  * navigation now and there is only the one.
  */
-enum class Face { Launch, Discs, Downloads, Saves,
+enum class Face { Launch, Discs, Downloads, Saves, Memory,
                   Input, Picture, Sound, Processor, Drive,
-                  About, Setup };
+                  About, Paths, Setup };
 
 /*
  * The initial of a title, for the A-Z strip.
@@ -1961,7 +1962,9 @@ int main(int argc, char **argv)
 
             /* ============ the rail, where there is width for one ============ */
             if (!narrow) {
-                ImGui::BeginChild("##rail", ImVec2(rail_w, body_h));
+                ImGui::BeginChild("##rail", ImVec2(rail_w, body_h), ImGuiChildFlags_None,
+                                  ImGuiWindowFlags_NoScrollbar |
+                                  ImGuiWindowFlags_NoScrollWithMouse);
                 if (logo && logo_w > 0) {
                     const float w = ImGui::GetContentRegionAvail().x;
                     ImGui::Image((ImTextureID)(intptr_t)logo,
@@ -1984,24 +1987,93 @@ int main(int argc, char **argv)
                  * where the BIOS and the folders live, which is a thing you do
                  * once.
                  */
-                tab("Launch", Face::Launch, bsz);
-                ImGui::Spacing();
+                /*
+                 * The whole rail, always, without a scrollbar.
+                 *
+                 * A navigation you have to scroll to see is not a navigation,
+                 * and on a handheld -- where the buttons are twice the size
+                 * for a thumb -- eleven of them did not fit. So the height is
+                 * worked out from what is left rather than fixed, and if that
+                 * would make them too small to hit, they go into two columns
+                 * instead. Nothing is ever hidden.
+                 */
+                /* A short name for the two-column case: half a rail is not
+                 * wide enough for "Save states", and a clipped label is worse
+                 * than a terse one. */
+                struct Entry { const char *label; const char *terse; Face face; bool heading; };
+                Entry entries[] = {
+                    { "Launch",      "Launch", Face::Launch,    false },
+                    { "Discs",       "Discs",  Face::Discs,     false },
+                    { "Downloads",   "Media",  Face::Downloads, false },
+                    { "Save states", "Saves",  Face::Saves,     false },
+                    { "MACHINE",     "MACHINE",Face::Input,     true  },
+                    { "Memory",      "Memory", Face::Memory,    false },
+                    { "Input",       "Input",  Face::Input,     false },
+                    { "Picture",     "Picture",Face::Picture,   false },
+                    { "Sound",       "Sound",  Face::Sound,     false },
+                    { "Processor",   "CPU",    Face::Processor, false },
+                    { "Disc drive",  "Drive",  Face::Drive,     false },
+                    { "About",       "About",  Face::About,     false },
+                    { "Paths",       "Paths",  Face::Paths,     false },
+                    { "Setup",       "Setup",  Face::Setup,     false },
+                };
+                /*
+                 * Downloads stays in the rail whether or not it can be used.
+                 *
+                 * It was hidden when there was no client or no administrator
+                 * account, which is indistinguishable from the feature not
+                 * existing -- and on Android, where RetroMedia is not built
+                 * in at all, it simply vanished with no explanation anywhere.
+                 * A page that says why is better than a gap.
+                 */
+                int n_rows = 0, n_head = 0;
+                for (const Entry &e : entries) {
+                    if (e.heading) n_head++; else n_rows++;
+                }
 
-                tab("Discs", Face::Discs, bsz);
-                if (downloads_offered) tab("Downloads", Face::Downloads, bsz);
-                tab("Save states", Face::Saves, bsz);
+                const float avail_h = ImGui::GetContentRegionAvail().y;
+                const float sp_y = ImGui::GetStyle().ItemSpacing.y;
+                const float head_row = ImGui::GetTextLineHeightWithSpacing();
+                const float want = fs * 2.0f;          /* the comfortable size  */
+                const float floor_h = fs * 1.45f;      /* the smallest thumb    */
 
-                ImGui::Spacing();
-                TextDim("  MACHINE");
-                tab("Input", Face::Input, bsz);
-                tab("Picture", Face::Picture, bsz);
-                tab("Sound", Face::Sound, bsz);
-                tab("Processor", Face::Processor, bsz);
-                tab("Disc drive", Face::Drive, bsz);
+                auto fits = [&](int cols, float bh) {
+                    const int rows = (n_rows + cols - 1) / cols;
+                    return rows * (bh + sp_y) + n_head * head_row <= avail_h;
+                };
 
-                ImGui::Spacing();
-                tab("About", Face::About, bsz);
-                tab("Setup", Face::Setup, bsz);
+                int cols = 1;
+                float bh = want;
+                if (!fits(1, want)) {
+                    /* Shrink first: one column reads better than two. */
+                    const int rows = n_rows;
+                    bh = (avail_h - n_head * head_row) / (float)rows - sp_y;
+                    if (bh < floor_h) { cols = 2; bh = want;
+                        if (!fits(2, want)) {
+                            const int r2 = (n_rows + 1) / 2;
+                            bh = std::max(floor_h,
+                                          (avail_h - n_head * head_row) / (float)r2 - sp_y);
+                        }
+                    }
+                }
+
+                const float col_w = cols == 1
+                    ? -FLT_MIN
+                    : (ImGui::GetContentRegionAvail().x -
+                       ImGui::GetStyle().ItemSpacing.x) * 0.5f;
+                const ImVec2 esz(col_w, bh);
+
+                int placed = 0;
+                for (const Entry &e : entries) {
+                    if (e.heading) {
+                        if (cols == 2 && (placed % 2) == 1) { placed++; }  /* finish the row */
+                        TextDim("  %s", e.label);
+                        continue;
+                    }
+                    if (cols == 2 && (placed % 2) == 1) ImGui::SameLine();
+                    tab(cols == 2 ? e.terse : e.label, e.face, esz);
+                    placed++;
+                }
                 ImGui::EndChild();
                 ImGui::SameLine();
             }
@@ -2119,7 +2191,7 @@ int main(int argc, char **argv)
 
                 /* The console, as big as the stage allows, with room beside it
                  * for the disc. */
-                float ch = stage_h * 0.72f;
+                float ch = stage_h * 0.62f;
                 float cwid = art_console_h > 0
                            ? ch * (float)art_console_w / (float)art_console_h : ch;
                 const float disc_d = std::min(stage_h * 0.55f, avail.x * 0.28f);
@@ -2194,21 +2266,27 @@ int main(int argc, char **argv)
                         apply_ports();
                         saturn::save_app_config(cfg_path, cfg);
                     };
+                    /*
+                     * Laid out by measuring the row and centring the whole of
+                     * it, not by placing each piece at a computed column.
+                     *
+                     * The column version put the second arrow at a fixed
+                     * offset and the name at another, and on a handheld -- for
+                     * which the arrows are twice the size -- the name ran
+                     * underneath the arrow. Natural widths cannot overlap.
+                     */
+                    const char *nm = saturn::peripheral_name(p);
                     const float arrow = ImGui::GetFrameHeight();
+                    const float sp = ImGui::GetStyle().ItemSpacing.x;
+                    const float row_w = arrow * 2.0f + sp * 2.0f +
+                                        ImGui::CalcTextSize(nm).x;
+                    ImGui::SetCursorPosX(ImGui::GetCursorPosX() +
+                                         std::max(0.0f, (half_w - row_w) * 0.5f));
                     if (ImGui::ArrowButton("##prev", ImGuiDir_Left)) step(-1);
                     ImGui::SameLine();
-                    /* Centred in what is left, so the row does not shuffle
-                     * about as the name changes length. */
-                    const char *nm = saturn::peripheral_name(p);
-                    const float band = std::max(half_w - arrow * 2.0f
-                                                    - ImGui::GetStyle().ItemSpacing.x * 2.0f,
-                                                ImGui::GetFontSize());
-                    const float tw = ImGui::CalcTextSize(nm).x;
-                    const float here = ImGui::GetCursorPosX();
-                    ImGui::SetCursorPosX(here + std::max(0.0f, (band - tw) * 0.5f));
+                    ImGui::AlignTextToFramePadding();
                     ImGui::TextUnformatted(nm);
                     ImGui::SameLine();
-                    ImGui::SetCursorPosX(here + band + ImGui::GetStyle().ItemSpacing.x);
                     if (ImGui::ArrowButton("##next", ImGuiDir_Right)) step(+1);
                     ImGui::PopID();
                     ImGui::EndGroup();
@@ -2368,6 +2446,7 @@ int main(int argc, char **argv)
                 flow("Processor", Face::Processor);
                 flow("Disc drive", Face::Drive);
                 flow("About", Face::About);
+                flow("Paths", Face::Paths);
                 flow("Setup", Face::Setup);
                 ImGui::Spacing();
             }
@@ -2519,6 +2598,35 @@ int main(int argc, char **argv)
                 }
             }
 
+            else if (face == Face::Downloads && !downloads_offered) {
+                /*
+                 * Present but not usable, and it says which.
+                 *
+                 * Hiding the entry made the feature look as though it did not
+                 * exist -- especially on Android, where the client is not
+                 * compiled in at all and there was nothing anywhere to say so.
+                 */
+                ImGui::Spacing();
+                ImGui::TextUnformatted("Downloads");
+                ImGui::Spacing();
+                if (!saturn::media_available()) {
+                    TextDimWrapped("The RetroMedia client is not built into this "
+                                   "version. It needs libcurl, which this build does "
+                                   "not have -- the desktop build does, and downloads "
+                                   "work there.");
+                } else if (!account.signed_in) {
+                    TextDimWrapped("Sign in on the Setup page first. An account at "
+                                   "media.crownparkcomputing.com -- an ordinary email "
+                                   "and password.");
+                } else if (!account.is_admin) {
+                    TextDimWrappedF("Signed in as %s. Downloading discs needs an "
+                                    "administrator account; cover art does not, and "
+                                    "is already working.", account.email.c_str());
+                } else if (!saturn::media_downloads_available()) {
+                    TextDimWrapped("Downloads are not offered on this platform.");
+                }
+            }
+
             else if (face == Face::Downloads) {
                 ImGui::Spacing();
                 TextDim("%s   %d credit%s, %d free left", account.email.c_str(),
@@ -2616,99 +2724,90 @@ int main(int argc, char **argv)
                 ImGui::EndChild();
             }
 
-            else if (face == Face::Saves) {
+            else if (face == Face::Memory) {
                 /*
-                 * What is on disk, and a way to get rid of it.
+                 * The console's own memory, which is not a save state.
                  *
-                 * Save data is the one thing in this application that cannot
-                 * be downloaded again, so it should be possible to see what
-                 * there is, where it is, and how old it is -- without going
-                 * and finding a file manager.
+                 * Thirty-two kilobytes of battery-backed SRAM inside the
+                 * machine, shared by every game that saves anything, exactly
+                 * as on the hardware. It was on the save-states page and did
+                 * not belong there: states are per game and this is per
+                 * console, and putting them together invited the idea that
+                 * deleting one game's states would free space here.
                  */
                 ImGui::Spacing();
-                ImGui::TextUnformatted("Where saves are kept");
-                TextDim("%s", saves_dir.c_str());
-                TextDimWrapped("Outside the app, so an uninstall or a new build "
-                               "cannot take them with it. Change it in Console, "
-                               "Setup.");
-
-                ImGui::Spacing(); ImGui::Separator(); ImGui::Spacing();
-                ImGui::TextUnformatted("The Saturn's memory");
+                ImGui::TextUnformatted("The Saturn's internal memory");
+                TextDimWrapped("32 KB of battery-backed memory inside the console, "
+                               "shared by every game that saves anything -- as on the "
+                               "hardware, where filling it up meant deleting somebody "
+                               "else's save.");
+                ImGui::Spacing();
                 {
                     SDL_PathInfo info;
                     if (SDL_GetPathInfo(bram_path.c_str(), &info) &&
                         info.type == SDL_PATHTYPE_FILE) {
                         SDL_DateTime dt{};
                         if (SDL_TimeToDateTime((SDL_Time)info.modify_time, &dt, true))
-                            TextDim("backup-ram.bin  %llu bytes  last written "
-                                    "%04d-%02d-%02d %02d:%02d",
-                                    (unsigned long long)info.size,
-                                    dt.year, dt.month, dt.day, dt.hour, dt.minute);
+                            TextDimWrappedF("%llu bytes, last written %04d-%02d-%02d "
+                                            "%02d:%02d", (unsigned long long)info.size,
+                                            dt.year, dt.month, dt.day, dt.hour, dt.minute);
                         else
-                            TextDim("backup-ram.bin  %llu bytes",
-                                    (unsigned long long)info.size);
+                            TextDimWrappedF("%llu bytes", (unsigned long long)info.size);
                     } else {
-                        TextDim("not written yet");
+                        TextDim("Nothing written yet.");
                     }
-                    TextDimWrapped("The 32 KiB battery-backed memory inside the "
-                                   "console. Every game that saves anything saves it "
-                                   "here, all of them sharing the one chip, exactly "
-                                   "as on the hardware.");
+                    TextDim("%s", bram_path.c_str());
+
+                    ImGui::Spacing();
                     if (ImGui::Button("Keep a dated copy")) {
                         SDL_DateTime dt{};
                         SDL_Time now = 0;
                         SDL_GetCurrentTime(&now);
                         SDL_TimeToDateTime(now, &dt, true);
-                        char stamp[64];
+                        char stamp[96];
                         snprintf(stamp, sizeof stamp,
                                  "%s/backup-ram-%04d%02d%02d-%02d%02d%02d.bin",
                                  saves_dir.c_str(), dt.year, dt.month, dt.day,
                                  dt.hour, dt.minute, dt.second);
-                        say("Copy kept", ymir_bridge_save_internal_backup_memory(
-                                             ymir, stamp));
+                        say("Copy kept", ymir_bridge_save_internal_backup_memory(ymir, stamp));
                     }
                     ImGui::SameLine();
                     TextDim("before trying something that might overwrite it");
-                }
 
-                ImGui::Spacing(); ImGui::Separator(); ImGui::Spacing();
-                ImGui::TextUnformatted("Save states");
-                {
+                    /* The copies, so one can be found again. */
                     int n = 0;
-                    char **found = SDL_GlobDirectory(states_dir.c_str(), "*", 0, &n);
-                    if (n <= 0) {
-                        TextDimWrapped("None yet. In a game, press Escape and use the "
-                                       "slots there, or F5 to save and F8 to load.");
-                    }
-                    ImGui::BeginChild("##states");
-                    for (int i = 0; found && i < n; ++i) {
-                        const std::string name = found[i];
-                        const std::string full = states_dir + "/" + name;
-                        SDL_PathInfo info;
-                        if (!SDL_GetPathInfo(full.c_str(), &info) ||
-                            info.type != SDL_PATHTYPE_FILE) continue;
-                        ImGui::PushID(i);
-                        ImGui::TextUnformatted(name.c_str());
-                        ImGui::SameLine(fw * 0.50f);
-                        SDL_DateTime dt{};
-                        if (SDL_TimeToDateTime((SDL_Time)info.modify_time, &dt, true))
-                            TextDim("%04d-%02d-%02d %02d:%02d   %.1f MB",
-                                    dt.year, dt.month, dt.day, dt.hour, dt.minute,
-                                    (double)info.size / (1024.0 * 1024.0));
-                        ImGui::SameLine(fw * 0.84f);
-                        /* Held, not clicked: deleting a save by brushing past
-                         * the wrong row is not a mistake worth allowing. */
-                        ImGui::SmallButton("Delete");
-                        if (ImGui::IsItemActive() &&
-                            ImGui::GetIO().MouseDownDuration[0] > 0.6f) {
-                            SDL_RemovePath(full.c_str());
-                            say("Deleted", YMIR_OK);
+                    char **found = SDL_GlobDirectory(saves_dir.c_str(), "backup-ram-*.bin",
+                                                     SDL_GLOB_CASEINSENSITIVE, &n);
+                    if (n > 0) {
+                        ImGui::Spacing(); ImGui::Separator(); ImGui::Spacing();
+                        ImGui::TextUnformatted("Copies you have kept");
+                        ImGui::BeginChild("##brambk");
+                        for (int i = 0; found && i < n; ++i) {
+                            ImGui::PushID(i);
+                            ImGui::TextUnformatted(found[i]);
+                            ImGui::SameLine(fw * 0.62f);
+                            if (ImGui::SmallButton("Restore")) {
+                                const std::string src = saves_dir + "/" + found[i];
+                                say("Restored", ymir_bridge_load_internal_backup_memory(
+                                                    ymir, src.c_str(), 0));
+                                /* Back onto the live file, or the restore is
+                                 * lost the moment the machine writes again. */
+                                ymir_bridge_save_internal_backup_memory(ymir, bram_path.c_str());
+                                load_bram();
+                            }
+                            ImGui::SameLine(fw * 0.82f);
+                            ImGui::SmallButton("Delete");
+                            if (ImGui::IsItemActive() &&
+                                ImGui::GetIO().MouseDownDuration[0] > 0.6f) {
+                                const std::string f = saves_dir + "/" + found[i];
+                                SDL_RemovePath(f.c_str());
+                                say("Deleted", YMIR_OK);
+                            }
+                            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Hold to delete");
+                            ImGui::PopID();
                         }
-                        if (ImGui::IsItemHovered())
-                            ImGui::SetTooltip("Hold to delete");
-                        ImGui::PopID();
+                        ImGui::EndChild();
                     }
-                    ImGui::EndChild();
                     if (found) SDL_free(found);
                 }
                 if (!state_message.empty() &&
@@ -2716,7 +2815,97 @@ int main(int argc, char **argv)
                     ImGui::TextUnformatted(state_message.c_str());
             }
 
-            else if (face == Face::Setup || face == Face::Input ||
+            else if (face == Face::Saves) {
+                /*
+                 * Save states, by game, laid out like the shelf.
+                 *
+                 * A state belongs to one disc and to one slot, so a flat list
+                 * of filenames was the wrong shape: the question people
+                 * actually have is "what have I got saved for THIS game", and
+                 * that is a heading with four slots under it.
+                 */
+                ImGui::Spacing();
+                TextDimWrapped("A snapshot of the whole machine, per game and per "
+                               "slot. Separate from the console's memory, which every "
+                               "game shares -- that is on the Memory page.");
+                ImGui::Spacing();
+                TextDim("%s", states_dir.c_str());
+                ImGui::Separator();
+
+                /* Gather <stem>.sN into one entry per game. */
+                struct Slot { bool present = false; Uint64 when = 0; Uint64 bytes = 0; };
+                std::map<std::string, std::array<Slot, 4>> by_game;
+                {
+                    int n = 0;
+                    char **found = SDL_GlobDirectory(states_dir.c_str(), "*", 0, &n);
+                    for (int i = 0; found && i < n; ++i) {
+                        const std::string name = found[i];
+                        const size_t dot = name.rfind(".s");
+                        if (dot == std::string::npos || dot + 2 >= name.size()) continue;
+                        const int slot = name[dot + 2] - '1';
+                        if (slot < 0 || slot > 3) continue;
+                        SDL_PathInfo info;
+                        const std::string full = states_dir + "/" + name;
+                        if (!SDL_GetPathInfo(full.c_str(), &info) ||
+                            info.type != SDL_PATHTYPE_FILE) continue;
+                        Slot &sl = by_game[name.substr(0, dot)][(size_t)slot];
+                        sl.present = true;
+                        sl.when = (Uint64)info.modify_time;
+                        sl.bytes = (Uint64)info.size;
+                    }
+                    if (found) SDL_free(found);
+                }
+
+                if (by_game.empty()) {
+                    ImGui::Spacing();
+                    TextDimWrapped("Nothing saved yet. In a game, press Escape and use "
+                                   "the slots there, or F5 to save and F8 to load.");
+                } else {
+                    ImGui::BeginChild("##states");
+                    for (auto &kv : by_game) {
+                        ImGui::PushID(kv.first.c_str());
+                        ImGui::TextUnformatted(kv.first.c_str());
+                        for (int i = 0; i < 4; ++i) {
+                            const Slot &sl = kv.second[(size_t)i];
+                            ImGui::PushID(i);
+                            ImGui::Text("   Slot %d", i + 1);
+                            ImGui::SameLine(fw * 0.16f);
+                            if (!sl.present) {
+                                TextDim("empty");
+                            } else {
+                                SDL_DateTime dt{};
+                                if (SDL_TimeToDateTime((SDL_Time)sl.when, &dt, true))
+                                    TextDim("%04d-%02d-%02d %02d:%02d   %.1f MB",
+                                            dt.year, dt.month, dt.day, dt.hour, dt.minute,
+                                            (double)sl.bytes / (1024.0 * 1024.0));
+                                else
+                                    TextDim("%.1f MB", (double)sl.bytes / (1024.0 * 1024.0));
+                                ImGui::SameLine(fw * 0.78f);
+                                ImGui::SmallButton("Delete");
+                                if (ImGui::IsItemActive() &&
+                                    ImGui::GetIO().MouseDownDuration[0] > 0.6f) {
+                                    const std::string f = states_dir + "/" + kv.first +
+                                                          ".s" + std::to_string(i + 1);
+                                    SDL_RemovePath(f.c_str());
+                                    say("Deleted", YMIR_OK);
+                                }
+                                if (ImGui::IsItemHovered())
+                                    ImGui::SetTooltip("Hold to delete");
+                            }
+                            ImGui::PopID();
+                        }
+                        ImGui::Spacing();
+                        ImGui::PopID();
+                    }
+                    ImGui::EndChild();
+                }
+                if (!state_message.empty() &&
+                    SDL_GetTicks() - state_message_at <= 5000)
+                    ImGui::TextUnformatted(state_message.c_str());
+            }
+
+            else if (face == Face::Setup || face == Face::Paths ||
+                     face == Face::Input ||
                      face == Face::Picture || face == Face::Sound ||
                      face == Face::Processor || face == Face::Drive) {
                 /*
@@ -2754,9 +2943,9 @@ int main(int argc, char **argv)
                 auto col_end = [&] { if (two_col) ImGui::EndTable(); };
 
                 {
-                    if (face == Face::Setup) {
+                    if (face == Face::Paths) {
                         ImGui::Spacing();
-                        col_begin("##setupcols");
+                        col_begin("##pathcols");
                         ImGui::TextUnformatted("BIOS");
                         TextDimWrapped("The Saturn will not start without one, and this "
                                        "app does not include it -- it is Sega's. Point "
@@ -2963,6 +3152,59 @@ int main(int argc, char **argv)
                             }
                         }
 
+                        col_end();
+                    }
+
+                    if (face == Face::Setup) {
+                        ImGui::Spacing();
+                        col_begin("##setupcols");
+                        
+                        ImGui::TextUnformatted("RetroMedia");
+                        if (!saturn::media_available()) {
+                            TextDimWrapped("Not built into this version.");
+                        } else if (account.signed_in) {
+                            TextDim("Signed in as %s%s", account.email.c_str(),
+                                    account.is_admin ? " (administrator)" : "");
+                            TextDimWrapped(account.is_admin
+                                ? "The Downloads tab is yours."
+                                : "Cover art only -- downloading discs needs an "
+                                  "administrator account.");
+                            if (ImGui::Button("Sign out##setup")) {
+                                saturn::media_begin_logout();
+                                catalogue.clear();
+                            }
+                        } else {
+                            TextDimWrapped("An account at "
+                                           "media.crownparkcomputing.com. An ordinary "
+                                           "email and password -- there is no Google "
+                                           "account involved.");
+                            ImGui::SetNextItemWidth(-FLT_MIN);
+                            ImGui::InputTextWithHint("##email", "email",
+                                                     media_email, sizeof media_email);
+                            ImGui::SetNextItemWidth(
+                                two_col ? -(ImGui::CalcTextSize("Sign in").x +
+                                            ImGui::GetStyle().FramePadding.x * 2.0f +
+                                            ImGui::GetStyle().ItemSpacing.x)
+                                        : fw * 0.42f);
+                            const bool enter = ImGui::InputTextWithHint(
+                                "##pass", "password", media_pass, sizeof media_pass,
+                                ImGuiInputTextFlags_Password |
+                                ImGuiInputTextFlags_EnterReturnsTrue);
+                            ImGui::SameLine();
+                            ImGui::BeginDisabled(media_busy || !media_email[0] ||
+                                                 !media_pass[0]);
+                            const bool go = ImGui::Button("Sign in");
+                            ImGui::EndDisabled();
+                            if ((enter || go) && media_email[0] && media_pass[0]) {
+                                media_busy = true;
+                                saturn::media_begin_login(media_email, media_pass);
+                                /* The password leaves this buffer the moment the
+                                 * request has it, and again when the answer
+                                 * arrives. It is never written anywhere. */
+                                SDL_memset(media_pass, 0, sizeof media_pass);
+                            }
+                        }
+                        if (!media_message.empty()) TextDim("%s", media_message.c_str());
                         ImGui::Spacing(); ImGui::Separator(); ImGui::Spacing();
                         if (ImGui::Button("Run setup again")) { wizard = true; wstep = 0; }
                         ImGui::SameLine();
@@ -2983,6 +3225,7 @@ int main(int argc, char **argv)
                         }
                         col_end();
                     }
+
 
                     if (face == Face::Input) {
                         /*
@@ -3504,7 +3747,7 @@ int main(int argc, char **argv)
             downloads_offered = saturn::media_available() &&
                                 saturn::media_downloads_available() &&
                                 account.signed_in && account.is_admin;
-            if (!downloads_offered && face == Face::Downloads) face = Face::Discs;
+
         }
 
         /* One place decides whether the Saturn is running, and it is the only
