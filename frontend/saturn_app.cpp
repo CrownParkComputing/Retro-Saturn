@@ -1022,11 +1022,26 @@ int main(int argc, char **argv)
 
     /* Which photograph belongs to a socket. Anything without one of its own
      * borrows the pad, which is what all of them are shaped like. */
+    /*
+     * Only the photographs we actually have.
+     *
+     * This used to answer "the Control Pad" for everything that was not a
+     * gun, so stepping from Control Pad to 3D Control Pad to Arcade Racer to
+     * Shuttle Mouse showed the same picture every time -- the graphic never
+     * appeared to change, and worse, a Shuttle Mouse was illustrated with a
+     * photograph of a pad. There are three renders in this application; a
+     * peripheral without one gets a plate with its name on, which is honest
+     * and still tells you the port is occupied.
+     */
     auto art_for = [&](saturn::Peripheral p, int *w, int *h) -> SDL_Texture * {
+        *w = 0; *h = 0;
         switch (p) {
-        case saturn::Peripheral::None:        *w = 0; *h = 0; return nullptr;
-        case saturn::Peripheral::VirtuaGun:   *w = art_gun_w; *h = art_gun_h; return art_gun;
-        default:                              *w = art_pad_w; *h = art_pad_h; return art_pad;
+        case saturn::Peripheral::ControlPad:
+            *w = art_pad_w; *h = art_pad_h; return art_pad;
+        case saturn::Peripheral::VirtuaGun:
+            *w = art_gun_w; *h = art_gun_h; return art_gun;
+        default:
+            return nullptr;
         }
     };
     {
@@ -1076,6 +1091,7 @@ int main(int argc, char **argv)
      * is the thing somebody opened the application to do. */
     Face face = Face::Launch;
     char disc_letter = 0;          /* A-Z strip on the shelf; 0 = everything */
+    int  disc_tab = 0;             /* 0 = your discs, 1 = the catalogue       */
     /*
      * Covers where covers can exist, names where they cannot.
      *
@@ -2004,7 +2020,6 @@ int main(int argc, char **argv)
                 Entry entries[] = {
                     { "Launch",      "Launch", Face::Launch,    false },
                     { "Discs",       "Discs",  Face::Discs,     false },
-                    { "Downloads",   "Media",  Face::Downloads, false },
                     { "Save states", "Saves",  Face::Saves,     false },
                     { "MACHINE",     "MACHINE",Face::Input,     true  },
                     { "Memory",      "Memory", Face::Memory,    false },
@@ -2246,7 +2261,7 @@ int main(int argc, char **argv)
                                             at.y + (ph - ih) * 0.5f),
                                      ImVec2(at.x + (half_w + iw) * 0.5f,
                                             at.y + (ph + ih) * 0.5f));
-                    } else {
+                    } else if (p == saturn::Peripheral::None) {
                         /* An empty socket, drawn as one: a dark slot of the
                          * shape the Saturn's actually are. */
                         const float sw = std::min(half_w * 0.5f, ph * 1.7f);
@@ -2256,6 +2271,21 @@ int main(int argc, char **argv)
                         const ImVec2 b(a.x + sw, a.y + sh);
                         dl->AddRectFilled(a, b, IM_COL32(10, 11, 16, 255), 3.0f);
                         dl->AddRect(a, b, IM_COL32(64, 72, 94, 220), 3.0f);
+                    } else {
+                        /* Plugged in, but we have no photograph of this one.
+                         * A plate with its name says so; borrowing another
+                         * peripheral's picture would be a lie. */
+                        const float pw = half_w * 0.8f, phh = ph * 0.8f;
+                        const ImVec2 a(at.x + (half_w - pw) * 0.5f,
+                                       at.y + (ph - phh) * 0.5f);
+                        const ImVec2 b(a.x + pw, a.y + phh);
+                        dl->AddRectFilled(a, b, IM_COL32(24, 27, 38, 255), 5.0f);
+                        dl->AddRect(a, b, IM_COL32(80, 90, 116, 220), 5.0f);
+                        const char *nm2 = saturn::peripheral_name(p);
+                        const ImVec2 tsz = ImGui::CalcTextSize(nm2);
+                        dl->AddText(ImVec2(a.x + (pw - tsz.x) * 0.5f,
+                                           a.y + (phh - tsz.y) * 0.5f),
+                                    IM_COL32(180, 190, 210, 255), nm2);
                     }
 
                     /* ‹ name › under the socket it belongs to. */
@@ -2438,7 +2468,6 @@ int main(int argc, char **argv)
                 };
                 tab("Launch", Face::Launch, bsz);
                 flow("Discs", Face::Discs);
-                if (downloads_offered) flow("Downloads", Face::Downloads);
                 flow("Saves", Face::Saves);
                 flow("Input", Face::Input);
                 flow("Picture", Face::Picture);
@@ -2465,10 +2494,82 @@ int main(int argc, char **argv)
             const float fw = ImGui::GetContentRegionAvail().x;
 
             if (face == Face::Discs) {
-                ImGui::SetNextItemWidth(fw * 0.5f);
-                ImGui::InputTextWithHint("##find", "Find a game...", search,
-                                         sizeof search);
-                ImGui::SameLine();
+                /*
+                 * Two shelves, one screen: what you have and what you could
+                 * have. They are the same activity -- choosing a game -- and
+                 * putting the catalogue behind a separate entry in the rail
+                 * made it feel like a different part of the application.
+                 */
+                {
+                    const float tw = std::min(fw * 0.28f, em * 11.0f);
+                    auto dtab = [&](const char *label, int which) {
+                        const bool on = disc_tab == which;
+                        if (on) ImGui::PushStyleColor(ImGuiCol_Button,
+                                    ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
+                        if (ImGui::Button(label, ImVec2(tw, fs * 1.9f))) disc_tab = which;
+                        if (on) ImGui::PopStyleColor();
+                    };
+                    dtab("My discs", 0);
+                    ImGui::SameLine();
+                    dtab("Downloads", 1);
+
+                    /*
+                     * Search is a button, not a field.
+                     *
+                     * An always-present text box took a fifth of the row for
+                     * something used occasionally, and on a handheld tapping
+                     * it threw the on-screen keyboard over half the shelf. A
+                     * modal asks for the word, and the row keeps its space
+                     * for the things you press every time.
+                     */
+                    ImGui::SameLine(0.0f, ImGui::GetStyle().ItemSpacing.x * 2.0f);
+                    char label[96];
+                    const char *term = disc_tab == 0 ? search : media_search;
+                    if (term[0]) snprintf(label, sizeof label, "Search: %s  X", term);
+                    else         snprintf(label, sizeof label, "Search...");
+                    if (ImGui::Button(label, ImVec2(0, fs * 1.9f))) {
+                        if (term[0]) {
+                            /* A second press on a live search clears it: the
+                             * way out of a filter should be where the filter
+                             * is. */
+                            if (disc_tab == 0) search[0] = 0;
+                            else { media_search[0] = 0; refresh_catalogue(); }
+                        } else {
+                            ImGui::OpenPopup("Find a game");
+                        }
+                    }
+
+                    if (ImGui::BeginPopupModal("Find a game", nullptr,
+                                               ImGuiWindowFlags_AlwaysAutoResize)) {
+                        static char box[96];
+                        ImGui::SetNextItemWidth(em * 18.0f);
+                        const bool go = ImGui::InputTextWithHint(
+                            "##term", "part of a name", box, sizeof box,
+                            ImGuiInputTextFlags_EnterReturnsTrue);
+                        if (ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere(-1);
+                        ImGui::Spacing();
+                        if (go || ImGui::Button("Search", ImVec2(em * 8.0f, 0))) {
+                            if (disc_tab == 0) {
+                                SDL_strlcpy(search, box, sizeof search);
+                            } else {
+                                SDL_strlcpy(media_search, box, sizeof media_search);
+                                refresh_catalogue();
+                            }
+                            box[0] = 0;
+                            ImGui::CloseCurrentPopup();
+                        }
+                        ImGui::SameLine();
+                        if (ImGui::Button("Cancel", ImVec2(em * 8.0f, 0))) {
+                            box[0] = 0;
+                            ImGui::CloseCurrentPopup();
+                        }
+                        ImGui::EndPopup();
+                    }
+                }
+                ImGui::Spacing();
+            }
+
+            if (face == Face::Discs && disc_tab == 0) {
                 if (ImGui::Button("Rescan")) rescan();
                 ImGui::SameLine();
                 if (ImGui::Button(shelf_grid ? "List" : "Covers")) shelf_grid = !shelf_grid;
@@ -2609,7 +2710,7 @@ int main(int argc, char **argv)
                 }
             }
 
-            else if (face == Face::Downloads && !downloads_offered) {
+            else if (face == Face::Discs && disc_tab == 1 && !downloads_offered) {
                 /*
                  * Present but not usable, and it says which.
                  *
@@ -2638,7 +2739,7 @@ int main(int argc, char **argv)
                 }
             }
 
-            else if (face == Face::Downloads) {
+            else if (face == Face::Discs && disc_tab == 1) {
                 ImGui::Spacing();
                 TextDim("%s   %d credit%s, %d free left", account.email.c_str(),
                         account.credits, account.credits == 1 ? "" : "s",
@@ -2650,14 +2751,6 @@ int main(int argc, char **argv)
                 }
 
                 ImGui::Spacing();
-                ImGui::SetNextItemWidth(fw * 0.45f);
-                if (ImGui::InputTextWithHint("##dlsearch", "Find a game...",
-                                             media_search, sizeof media_search,
-                                             ImGuiInputTextFlags_EnterReturnsTrue))
-                    refresh_catalogue();
-                ImGui::SameLine();
-                if (ImGui::Button("Search")) refresh_catalogue();
-                ImGui::SameLine();
                 if (ImGui::Button("Refresh")) {
                     /* Forget the art as well as the list: a cover that failed
                      * once is otherwise never asked for again. */
