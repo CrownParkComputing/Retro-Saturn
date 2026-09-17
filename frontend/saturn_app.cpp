@@ -2088,9 +2088,57 @@ int main(int argc, char **argv)
                  * machine steps aside and the spinning disc carries the idea
                  * on its own.
                  */
+                /*
+                 * The machine, with what is plugged into it.
+                 *
+                 * A photograph of a console above photographs of the two
+                 * things in its ports, in the order they are in on the front
+                 * of the real one. It says what the state of the machine is
+                 * without a word: a gun in port one looks like a gun in port
+                 * one, and an empty socket looks like an empty socket.
+                 */
                 if (show_console_art) {
-                    const float w = h * (float)art_console_w / (float)art_console_h;
-                    ImGui::Image((ImTextureID)(intptr_t)art_console, ImVec2(w, h));
+                    ImGui::BeginGroup();
+                    const float ch = h * 0.70f;
+                    const float cw2 = ch * (float)art_console_w / (float)art_console_h;
+                    ImGui::Image((ImTextureID)(intptr_t)art_console, ImVec2(cw2, ch));
+
+                    /* Under the console, under its ports. Sized to the gap
+                     * that is left rather than a fraction picked by hand, so
+                     * the pair always fits the panel it is in. */
+                    const float ph = std::max(h - ch - ImGui::GetStyle().ItemSpacing.y,
+                                              ImGui::GetFrameHeight() * 0.6f);
+                    const float half_w = (cw2 - ImGui::GetStyle().ItemSpacing.x) * 0.5f;
+                    for (int which = 1; which <= 2; ++which) {
+                        const saturn::Peripheral p = (which == 1) ? cfg.machine.port1
+                                                                  : cfg.machine.port2;
+                        if (which == 2) ImGui::SameLine();
+                        const ImVec2 at = ImGui::GetCursorScreenPos();
+                        ImGui::Dummy(ImVec2(half_w, ph));
+                        int aw = 0, ah = 0;
+                        SDL_Texture *tex = art_for(p, &aw, &ah);
+                        ImDrawList *dl = ImGui::GetWindowDrawList();
+                        if (tex && ah > 0) {
+                            float ih = ph, iw = ih * (float)aw / (float)ah;
+                            if (iw > half_w) { iw = half_w; ih = iw * (float)ah / (float)aw; }
+                            dl->AddImage((ImTextureID)(intptr_t)tex,
+                                         ImVec2(at.x + (half_w - iw) * 0.5f,
+                                                at.y + (ph - ih) * 0.5f),
+                                         ImVec2(at.x + (half_w + iw) * 0.5f,
+                                                at.y + (ph + ih) * 0.5f));
+                        } else {
+                            /* An empty socket, drawn as one: a dark slot of
+                             * the shape the Saturn's actually are. */
+                            const float sw = std::min(half_w * 0.5f, ph * 1.7f);
+                            const float sh = std::min(ph * 0.42f, sw * 0.34f);
+                            const ImVec2 a(at.x + (half_w - sw) * 0.5f,
+                                           at.y + (ph - sh) * 0.5f);
+                            const ImVec2 b(a.x + sw, a.y + sh);
+                            dl->AddRectFilled(a, b, IM_COL32(10, 11, 16, 255), 3.0f);
+                            dl->AddRect(a, b, IM_COL32(64, 72, 94, 220), 3.0f);
+                        }
+                    }
+                    ImGui::EndGroup();
                     ImGui::SameLine();
                 }
 
