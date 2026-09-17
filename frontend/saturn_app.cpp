@@ -120,8 +120,11 @@ void apply_style()
     const ImVec4 ink      = ImVec4(0.055f, 0.063f, 0.090f, 1.00f);
     const ImVec4 panel    = ImVec4(0.094f, 0.106f, 0.145f, 1.00f);
     const ImVec4 raised   = ImVec4(0.137f, 0.153f, 0.204f, 1.00f);
-    const ImVec4 amber    = ImVec4(0.949f, 0.639f, 0.157f, 1.00f);
-    const ImVec4 amberDim = ImVec4(0.949f, 0.639f, 0.157f, 0.35f);
+    /* The accent is the logo's blue, taken from the mark itself rather than
+     * chosen beside it -- an app whose highlight colour disagrees with its own
+     * logo looks like two pieces of work. */
+    const ImVec4 amber    = ImVec4(0.290f, 0.608f, 0.910f, 1.00f);
+    const ImVec4 amberDim = ImVec4(0.290f, 0.608f, 0.910f, 0.35f);
 
     c[ImGuiCol_WindowBg]        = ink;
     c[ImGuiCol_ChildBg]         = panel;
@@ -141,7 +144,7 @@ void apply_style()
     c[ImGuiCol_TextDisabled]    = ImVec4(0.52f, 0.55f, 0.62f, 1.00f);
     c[ImGuiCol_CheckMark]       = amber;
     c[ImGuiCol_SliderGrab]      = amber;
-    c[ImGuiCol_SliderGrabActive]= ImVec4(1.00f, 0.72f, 0.26f, 1.00f);
+    c[ImGuiCol_SliderGrabActive]= ImVec4(0.42f, 0.71f, 0.97f, 1.00f);
     c[ImGuiCol_TitleBgActive]   = panel;
 }
 
@@ -255,7 +258,20 @@ int main(int argc, char **argv)
 
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
-    ImGui::GetIO().ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
+    /*
+     * No ImGui navigation at all, by keyboard or by pad.
+     *
+     * Turning off the gamepad half stopped the pad being consumed, but the
+     * interface still walked and activated itself -- the wizard advanced a
+     * step and opened a file dialog with nobody touching it. Whatever is
+     * feeding it, this app does not need the feature: it is driven by a mouse,
+     * and the keys it does want are handled by hand, in the emulator view,
+     * where they are sent to the Saturn.
+     *
+     * The cost of nav being on here is an interface that operates itself. The
+     * cost of it being off is that Tab does not move a focus ring. That is not
+     * a difficult trade.
+     */
     /*
      * Gamepad navigation is deliberately OFF.
      *
@@ -354,7 +370,20 @@ int main(int argc, char **argv)
      */
     const std::string smpc_path = cfg_dir + "smpc.bin";
     ymir_bridge_set_persistent_smpc_path(ymir, smpc_path.c_str());
-    ymir_bridge_load_smpc_state(ymir, smpc_path.c_str());
+    if (ymir_bridge_load_smpc_state(ymir, smpc_path.c_str()) != YMIR_OK) {
+        /*
+         * First run: set the machine up rather than making the user do it.
+         *
+         * A fresh Saturn has never had its clock or language set, so the BIOS
+         * asks -- every boot, about a date this device already knows. There is
+         * nothing to be gained from making somebody type it in, so the clock
+         * is taken from the host and the console is marked as configured.
+         * The BIOS screen is still there in its own menu for anyone who wants
+         * it.
+         */
+        ymir_bridge_init_smpc_from_host(ymir, 0);
+        ymir_bridge_save_smpc_state(ymir, smpc_path.c_str());
+    }
 
     apply_options();
     apply_ports();
@@ -492,6 +521,41 @@ int main(int argc, char **argv)
         while (SDL_PollEvent(&ev)) {
             ImGui_ImplSDL3_ProcessEvent(&ev);
             if (ev.type == SDL_EVENT_QUIT) quit = true;
+
+            /*
+             * Super+Q closes, Super+M resizes.
+             *
+             * Handled before anything else so they work from every screen,
+             * including with a game running and the pause menu up -- a
+             * shortcut that only works on the shelf is a shortcut nobody
+             * trusts. Super rather than Ctrl because Ctrl belongs to the
+             * guest: a Saturn game may well want it.
+             */
+            if (ev.type == SDL_EVENT_KEY_DOWN && (ev.key.mod & SDL_KMOD_GUI)) {
+                if (ev.key.scancode == SDL_SCANCODE_Q) { quit = true; continue; }
+                if (ev.key.scancode == SDL_SCANCODE_M) {
+                    /* Between filling the display and a window you can put
+                     * beside something else. Not SDL_MaximizeWindow: on a
+                     * tiling desktop that does nothing visible, and the point
+                     * is to change size. */
+                    static bool big = false;
+                    big = !big;
+                    if (big) {
+                        const SDL_DisplayID d = SDL_GetDisplayForWindow(win);
+                        SDL_Rect r{};
+                        if (SDL_GetDisplayUsableBounds(d, &r) && r.w > 0)
+                            SDL_SetWindowSize(win, (int)(r.w * 0.95f),
+                                              (int)(r.h * 0.95f));
+                        else
+                            SDL_MaximizeWindow(win);
+                    } else {
+                        SDL_RestoreWindow(win);
+                        SDL_SetWindowSize(win, 1280, 800);
+                    }
+                    SDL_SyncWindow(win);
+                    continue;
+                }
+            }
 
             if (running_view && !show_pause &&
                 (ev.type == SDL_EVENT_KEY_DOWN || ev.type == SDL_EVENT_KEY_UP)) {
@@ -921,7 +985,7 @@ int main(int argc, char **argv)
             ImGui::BeginChild("##drive", ImVec2(0, drive_h),
                               ImGuiChildFlags_Borders);
             {
-                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.949f, 0.639f, 0.157f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.42f, 0.71f, 0.97f, 1.0f));
                 ImGui::TextUnformatted(loaded_title.empty() ? "NO DISC"
                                                             : loaded_title.c_str());
                 ImGui::PopStyleColor();
@@ -1027,7 +1091,7 @@ int main(int argc, char **argv)
                         ImGui::PushID((int)i);
                         const bool in_drive = (int)i == loaded_game_index;
                         if (in_drive) ImGui::PushStyleColor(ImGuiCol_Text,
-                                          ImVec4(0.949f, 0.639f, 0.157f, 1.0f));
+                                          ImVec4(0.42f, 0.71f, 0.97f, 1.0f));
                         if (ImGui::Selectable(g.title.c_str(), in_drive, 0,
                                               ImVec2(0, fs * 1.9f)))
                             insert_disc((int)i, 0);
@@ -1042,121 +1106,187 @@ int main(int argc, char **argv)
             }
 
             else if (face == Face::Console) {
+                /*
+                 * Tabbed, because it is four unrelated subjects.
+                 *
+                 * Setup, the processor, the picture, the sound and the disc
+                 * drive have nothing to do with each other, and as one long
+                 * column the thing you came for was always somewhere below the
+                 * fold. The tabs are named after the parts of the console
+                 * rather than after this application, so a setting is where
+                 * somebody would go looking for it.
+                 */
                 saturn::Settings &s = cfg.machine;
-                ImGui::TextUnformatted("BIOS");
-                TextDimWrapped("The Saturn will not start without one, and this app "
-                               "does not include it -- it is Sega's. Point this at "
-                               "the ROM you dumped from your own console.");
-                static char bios_buf[1024];
-                static bool primed = false;
-                if (!primed) {
-                    SDL_strlcpy(bios_buf, cfg.bios_path.c_str(), sizeof bios_buf);
-                    primed = true;
-                }
-                ImGui::SetNextItemWidth(cw * 0.7f);
-                if (ImGui::InputText("##bios", bios_buf, sizeof bios_buf)) {
-                    cfg.bios_path = bios_buf;
-                    load_bios();
-                    saturn::save_app_config(cfg_path, cfg);
-                }
-                ImGui::SameLine();
-                if (bios_loaded) {
-                    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.55f, 0.85f, 0.55f, 1.0f));
-                    ImGui::TextUnformatted("loaded");
-                    ImGui::PopStyleColor();
-                } else {
-                    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.75f, 0.3f, 1.0f));
-                    ImGui::TextUnformatted(cfg.bios_path.empty() ? "not set" : "not readable");
-                    ImGui::PopStyleColor();
-                }
-
-                ImGui::Spacing(); ImGui::Separator(); ImGui::Spacing();
-                ImGui::TextUnformatted("Discs folder");
-                static char root_buf[1024];
-                static bool root_primed = false;
-                if (!root_primed) {
-                    SDL_strlcpy(root_buf, cfg.disc_root.c_str(), sizeof root_buf);
-                    root_primed = true;
-                }
-                ImGui::SetNextItemWidth(cw * 0.7f);
-                if (ImGui::InputText("##root", root_buf, sizeof root_buf)) {
-                    cfg.disc_root = root_buf;
-                    saturn::save_app_config(cfg_path, cfg);
-                    rescan();
-                }
-
-                ImGui::Spacing();
-                if (ImGui::Button("Run setup again")) { wizard = true; wstep = 0; }
-                ImGui::SameLine();
-                {
-                    const std::string demo = saturn::demo_disc_path();
-                    ImGui::BeginDisabled(demo.empty() || !bios_loaded);
-                    if (ImGui::Button("Run the demo")) {
-                        saturn::Game g;
-                        saturn::Disc d;
-                        d.path = demo; d.file = "PPPong.cue";
-                        g.title = saturn::demo_title();
-                        g.discs.push_back(d);
-                        games.insert(games.begin(), g);
-                        insert_disc(0, 0);
-                        running_view = loaded_game_index >= 0;
-                    }
-                    ImGui::EndDisabled();
-                }
-
-                ImGui::Spacing(); ImGui::Separator(); ImGui::Spacing();
-                ImGui::TextUnformatted("Machine");
                 bool dirty = false;
-                dirty |= ImGui::Checkbox("Work out the region from the disc", &s.region_auto);
-                if (!s.region_auto) {
-                    ImGui::SameLine();
-                    dirty |= ImGui::RadioButton("NTSC", &s.video_standard, 0);
-                    ImGui::SameLine();
-                    dirty |= ImGui::RadioButton("PAL", &s.video_standard, 1);
+
+                if (ImGui::BeginTabBar("##console", ImGuiTabBarFlags_None)) {
+
+                    if (ImGui::BeginTabItem("Setup")) {
+                        ImGui::Spacing();
+                        ImGui::TextUnformatted("BIOS");
+                        TextDimWrapped("The Saturn will not start without one, and this "
+                                       "app does not include it -- it is Sega's. Point "
+                                       "this at the ROM you dumped from your own "
+                                       "console.");
+                        static char bios_buf[1024];
+                        static bool primed = false;
+                        if (!primed) {
+                            SDL_strlcpy(bios_buf, cfg.bios_path.c_str(), sizeof bios_buf);
+                            primed = true;
+                        }
+                        ImGui::SetNextItemWidth(cw * 0.6f);
+                        if (ImGui::InputText("##bios", bios_buf, sizeof bios_buf)) {
+                            cfg.bios_path = bios_buf;
+                            load_bios();
+                            saturn::save_app_config(cfg_path, cfg);
+                        }
+                        ImGui::SameLine();
+                        ImGui::BeginDisabled(saturn::pick_in_progress());
+                        if (ImGui::Button("Browse...")) saturn::begin_pick_file();
+                        ImGui::EndDisabled();
+                        if (bios_loaded) {
+                            ImGui::PushStyleColor(ImGuiCol_Text,
+                                                  ImVec4(0.55f, 0.85f, 0.55f, 1.0f));
+                            ImGui::TextUnformatted("loaded");
+                            ImGui::PopStyleColor();
+                        } else {
+                            ImGui::PushStyleColor(ImGuiCol_Text,
+                                                  ImVec4(1.0f, 0.75f, 0.3f, 1.0f));
+                            ImGui::TextUnformatted(cfg.bios_path.empty()
+                                                   ? "not set" : "not readable");
+                            ImGui::PopStyleColor();
+                        }
+
+                        ImGui::Spacing(); ImGui::Separator(); ImGui::Spacing();
+                        ImGui::TextUnformatted("Discs folder");
+                        static char root_buf[1024];
+                        static bool root_primed = false;
+                        if (!root_primed) {
+                            SDL_strlcpy(root_buf, cfg.disc_root.c_str(), sizeof root_buf);
+                            root_primed = true;
+                        }
+                        ImGui::SetNextItemWidth(cw * 0.6f);
+                        if (ImGui::InputText("##root", root_buf, sizeof root_buf)) {
+                            cfg.disc_root = root_buf;
+                            saturn::save_app_config(cfg_path, cfg);
+                            rescan();
+                        }
+                        ImGui::SameLine();
+                        ImGui::BeginDisabled(saturn::pick_in_progress());
+                        if (ImGui::Button("Browse...##root")) saturn::begin_pick_folder();
+                        ImGui::EndDisabled();
+
+                        {   /* Whichever dialog was opened, its answer lands here. */
+                            std::string got;
+                            if (saturn::take_pick(got)) {
+                                SDL_PathInfo pi;
+                                const bool isdir = SDL_GetPathInfo(got.c_str(), &pi) &&
+                                                   pi.type == SDL_PATHTYPE_DIRECTORY;
+                                if (isdir) {
+                                    cfg.disc_root = got;
+                                    SDL_strlcpy(root_buf, got.c_str(), sizeof root_buf);
+                                    rescan();
+                                } else {
+                                    cfg.bios_path = got;
+                                    SDL_strlcpy(bios_buf, got.c_str(), sizeof bios_buf);
+                                    load_bios();
+                                }
+                                saturn::save_app_config(cfg_path, cfg);
+                            }
+                        }
+
+                        ImGui::Spacing(); ImGui::Separator(); ImGui::Spacing();
+                        if (ImGui::Button("Run setup again")) { wizard = true; wstep = 0; }
+                        ImGui::SameLine();
+                        {
+                            const std::string demo = saturn::demo_disc_path();
+                            ImGui::BeginDisabled(demo.empty() || !bios_loaded);
+                            if (ImGui::Button("Run the demo")) {
+                                saturn::Game g;
+                                saturn::Disc d;
+                                d.path = demo; d.file = "PPPong.cue";
+                                g.title = saturn::demo_title();
+                                g.discs.push_back(d);
+                                games.insert(games.begin(), g);
+                                insert_disc(0, 0);
+                                running_view = loaded_game_index >= 0;
+                            }
+                            ImGui::EndDisabled();
+                        }
+                        ImGui::EndTabItem();
+                    }
+
+                    if (ImGui::BeginTabItem("Processor")) {
+                        ImGui::Spacing();
+                        dirty |= ImGui::Checkbox("Work out the region from the disc",
+                                                 &s.region_auto);
+                        if (!s.region_auto) {
+                            ImGui::SameLine();
+                            dirty |= ImGui::RadioButton("NTSC", &s.video_standard, 0);
+                            ImGui::SameLine();
+                            dirty |= ImGui::RadioButton("PAL", &s.video_standard, 1);
+                        }
+                        ImGui::Spacing();
+                        dirty |= ImGui::Checkbox("Emulate the SH2 cache (accurate, slower)",
+                                                 &s.sh2_cache);
+                        ImGui::SetNextItemWidth(cw * 0.45f);
+                        dirty |= ImGui::SliderInt("Processor speed", &s.sh2_clock,
+                                                  50, 300, "%d%%");
+                        TextDimWrapped("100% is the real machine. Games written for it "
+                                       "can and do break when it is faster.");
+                        ImGui::EndTabItem();
+                    }
+
+                    if (ImGui::BeginTabItem("Picture")) {
+                        ImGui::Spacing();
+                        dirty |= ImGui::Checkbox("Threaded VDP1", &s.threaded_vdp1);
+                        dirty |= ImGui::Checkbox("Threaded VDP2", &s.threaded_vdp2);
+                        dirty |= ImGui::Checkbox("Threaded deinterlacer",
+                                                 &s.threaded_deinterlace);
+                        TextDimWrapped("The two video processors are most of this "
+                                       "emulator's work, so they run on their own "
+                                       "threads. Turn one off only to find out whether "
+                                       "it is the cause of something.");
+                        ImGui::EndTabItem();
+                    }
+
+                    if (ImGui::BeginTabItem("Sound")) {
+                        ImGui::Spacing();
+                        int interp = s.audio_interpolation;
+                        dirty |= ImGui::RadioButton("Linear (as the hardware)", &interp, 1);
+                        ImGui::SameLine();
+                        dirty |= ImGui::RadioButton("Nearest (harsher)", &interp, 0);
+                        s.audio_interpolation = interp;
+                        TextDimWrapped("The SCSP interpolates linearly, which makes the "
+                                       "accurate choice the one that sounds like an "
+                                       "improvement.");
+                        ImGui::EndTabItem();
+                    }
+
+                    if (ImGui::BeginTabItem("Disc drive")) {
+                        ImGui::Spacing();
+                        ImGui::SetNextItemWidth(cw * 0.45f);
+                        dirty |= ImGui::SliderInt("Read speed", &s.cd_read_speed,
+                                                  2, 200, "%dx");
+                        TextDimWrapped("2x is the real drive. Faster cuts loading, and a "
+                                       "few titles that stream from the disc in time "
+                                       "with the music will notice.");
+                        ImGui::Spacing();
+                        dirty |= ImGui::Checkbox("Low-level CD block (slower, reads more "
+                                                 "discs)", &s.cdblock_lle);
+                        ImGui::Spacing(); ImGui::Separator(); ImGui::Spacing();
+                        ImGui::TextUnformatted("Clock");
+                        TextDimWrapped("The Saturn takes its clock from this device the "
+                                       "first time it runs, and remembers it -- which is "
+                                       "why the BIOS does not ask. There is no switch "
+                                       "for the core's RTC mode: setting it crashes "
+                                       "inside Ymir, and a control that ends the app is "
+                                       "worse than no control.");
+                        ImGui::EndTabItem();
+                    }
+
+                    ImGui::EndTabBar();
                 }
-                dirty |= ImGui::Checkbox("Emulate the SH2 cache (accurate, slower)",
-                                         &s.sh2_cache);
-                ImGui::SetNextItemWidth(cw * 0.5f);
-                dirty |= ImGui::SliderInt("Processor speed", &s.sh2_clock, 50, 300, "%d%%");
-                TextDimWrapped("100% is the real machine. Games written for it can and "
-                               "do break when it is faster.");
-
-                ImGui::Spacing();
-                dirty |= ImGui::Checkbox("Threaded VDP1", &s.threaded_vdp1);
-                ImGui::SameLine();
-                dirty |= ImGui::Checkbox("Threaded VDP2", &s.threaded_vdp2);
-                ImGui::SameLine();
-                dirty |= ImGui::Checkbox("Threaded deinterlacer", &s.threaded_deinterlace);
-
-                ImGui::Spacing();
-                ImGui::SetNextItemWidth(cw * 0.5f);
-                dirty |= ImGui::SliderInt("CD read speed", &s.cd_read_speed, 2, 200, "%dx");
-                TextDimWrapped("2x is the real drive. Faster cuts loading, and a few "
-                               "titles that stream from the disc in time with the "
-                               "music will notice.");
-                dirty |= ImGui::Checkbox("Low-level CD block (slower, reads more discs)",
-                                         &s.cdblock_lle);
-
-                ImGui::Spacing(); ImGui::Separator(); ImGui::Spacing();
-                ImGui::TextUnformatted("Sound");
-                {
-                    /* Linear is what the SCSP does, which makes the accurate
-                     * option the one that sounds like an enhancement. */
-                    int interp = s.audio_interpolation;
-                    dirty |= ImGui::RadioButton("Linear (as the hardware)", &interp, 1);
-                    ImGui::SameLine();
-                    dirty |= ImGui::RadioButton("Nearest (harsher, older sound)",
-                                                &interp, 0);
-                    s.audio_interpolation = interp;
-                }
-
-                ImGui::Spacing(); ImGui::Separator(); ImGui::Spacing();
-                ImGui::TextUnformatted("Clock");
-                TextDimWrapped("The Saturn follows this device's clock, which is why "
-                               "it knows the date without being told. There is no "
-                               "switch for it: setting the core's RTC mode crashes "
-                               "inside Ymir, and a control that ends the app is worse "
-                               "than no control.");
 
                 if (dirty) {
                     apply_options();
