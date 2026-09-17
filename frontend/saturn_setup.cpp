@@ -29,10 +29,12 @@ std::string demo_disc_path()
      */
     std::vector<std::string> tries;
 #if defined(__ANDROID__)
-    /* An APK asset has no filesystem path, so it is unpacked to the app's own
-     * storage on first run and read from there. */
-    if (const char *internal = SDL_GetAndroidInternalStoragePath())
+    /* An APK asset has no filesystem path, so MainActivity unpacks it to the
+     * app's own storage on first run and it is read from there. */
+    if (const char *internal = SDL_GetAndroidInternalStoragePath()) {
         tries.push_back(std::string(internal) + "/demo/PPPong.cue");
+        tries.push_back(std::string(internal) + "/demo/PPPong.bin");
+    }
 #else
     if (const char *base = SDL_GetBasePath()) {
         tries.push_back(std::string(base) + "demo/PPPong.cue");

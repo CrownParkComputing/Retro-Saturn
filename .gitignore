@@ -86,3 +86,20 @@ saturn_bios*
 # not Sega's copyrighted BIOS.
 !tools/test-roms/homebrew/
 !tools/test-roms/homebrew/**
+
+# Android build outputs. The libraries are produced by android/build-core.sh
+# from sources that ARE tracked, so any checkout can build them; committing
+# ten megabytes of .so per build would only make the history heavier and the
+# review harder.
+android/app/src/main/jniLibs/
+android/app/libs/
+android/app/src/main/assets/
+android/build/
+android/.gradle/
+android/local.properties
+android/app/build/
+
+# Signing material, never.
+*.jks
+*.keystore
+key.properties

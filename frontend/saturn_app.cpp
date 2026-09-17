@@ -46,6 +46,9 @@
 #include "stb_image.h"
 
 #include <SDL3/SDL.h>
+/* Renames main() to SDL_main, which is the symbol SDLActivity looks up on
+ * Android. A no-op everywhere else, so there is one main() and one build. */
+#include <SDL3/SDL_main.h>
 
 #include "imgui.h"
 #include "imgui_impl_sdl3.h"
@@ -85,6 +88,18 @@ void TextDimWrapped(const char *text)
     ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.62f, 0.64f, 0.70f, 1.0f));
     ImGui::TextWrapped("%s", text);
     ImGui::PopStyleColor();
+}
+
+/* The same, for the callers that have something to substitute in. */
+void TextDimWrappedF(const char *fmt, ...) IM_FMTARGS(1);
+void TextDimWrappedF(const char *fmt, ...)
+{
+    va_list args;
+    va_start(args, fmt);
+    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.62f, 0.64f, 0.70f, 1.0f));
+    ImGui::TextWrappedV(fmt, args);
+    ImGui::PopStyleColor();
+    va_end(args);
 }
 
 std::string base_name(const std::string &path)
@@ -159,6 +174,24 @@ void apply_style()
  * one header rather than a dependency. Null on any failure, which every caller
  * here treats as "draw the name instead".
  */
+/*
+ * Where this build keeps the files it ships with.
+ *
+ * Beside the binary on a desktop. On Android there is no "beside the binary" --
+ * assets live inside the APK and have no filesystem path at all -- so
+ * MainActivity unpacks them into internal storage and this points there.
+ */
+std::string asset_base(void)
+{
+#if defined(__ANDROID__)
+    if (const char *p = SDL_GetAndroidInternalStoragePath())
+        return std::string(p) + "/";
+#else
+    if (const char *p = SDL_GetBasePath()) return std::string(p);
+#endif
+    return std::string();
+}
+
 SDL_Texture *load_png(SDL_Renderer *ren, const char *path, int *out_w, int *out_h)
 {
     int w = 0, h = 0, comp = 0;
@@ -522,8 +555,8 @@ int main(int argc, char **argv)
         if (scale <= 0.0f) scale = 1.0f;
         const float pt = std::clamp(18.0f * scale, 14.0f, 40.0f);
         bool got = false;
-        if (const char *base = SDL_GetBasePath()) {
-            const std::string f = std::string(base) + "assets/ui-font.ttf";
+        {
+            const std::string f = asset_base() + "assets/ui-font.ttf";
             got = ImGui::GetIO().Fonts->AddFontFromFileTTF(f.c_str(), pt) != nullptr;
         }
         if (!got) {
@@ -531,11 +564,60 @@ int main(int argc, char **argv)
             ImGui::GetIO().Fonts->AddFontDefault();
             ImGui::GetIO().FontGlobalScale = std::clamp(scale * 1.3f, 1.0f, 2.5f);
         }
-        /* Everything else in the style is in pixels too, so it has to move
-         * with the text or the buttons end up tight around bigger words. */
-        ImGui::GetStyle().ScaleAllSizes(std::clamp(scale, 1.0f, 2.5f));
+        /*
     }
     apply_style();
+    {
+        float scale = SDL_GetWindowDisplayScale(win);
+        if (scale <= 0.0f) scale = 1.0f;
+        /*
+         * Asking SDL is not enough on its own: a touch device is not
+         * enumerated until the first touch has actually happened, so at
+         * startup -- which is when the style is set -- a phone reports none.
+         * Android is therefore assumed, and the query is what catches a
+         * touchscreen on everything else.
+         */
+        /*
+         * Touch targets, where there is no pointer to be precise with.
+         *
+         * ImGui's defaults are drawn for a mouse: a few pixels of padding
+         * round a button is fine when you can put a cursor inside it and
+         * nowhere near enough for a thumb.
+         *
+         * Not gated on Android as such but on there being a touch device,
+         * because a Windows tablet and a handheld PC have the same problem and
+         * neither is Android.
+         */
+        bool touch = false;
+#if defined(__ANDROID__)
+        touch = true;
+#else
+        int n_touch = 0;
+        SDL_free(SDL_GetTouchDevices(&n_touch));
+        touch = n_touch > 0;
+#endif
+        if (touch) {
+            ImGuiStyle &st = ImGui::GetStyle();
+            st.FramePadding  = ImVec2(14.0f, 12.0f);
+            st.ItemSpacing   = ImVec2(12.0f, 10.0f);
+            st.ItemInnerSpacing = ImVec2(10.0f, 8.0f);
+            st.ScrollbarSize = 26.0f;
+            st.GrabMinSize   = 22.0f;
+            st.TouchExtraPadding = ImVec2(4.0f, 6.0f);
+        }
+
+        /*
+         * Scaling last, and the whole block after apply_style().
+         *
+         * The theme sets its own padding and spacing, so anything set before
+         * it was simply overwritten -- which is why the first attempt at
+         * thumb-sized buttons changed nothing at all. Scaling has to be last
+         * for the same reason: it multiplies whatever is in the style, and a
+         * style assigned afterwards is back to unscaled pixels.
+         */
+        ImGui::GetStyle().ScaleAllSizes(std::clamp(scale, 1.0f, 2.5f));
+    }
+
     ImGui_ImplSDL3_InitForSDLRenderer(win, ren);
     ImGui_ImplSDLRenderer3_Init(ren);
     /*
@@ -809,14 +891,15 @@ int main(int argc, char **argv)
         default:                              *w = art_pad_w; *h = art_pad_h; return art_pad;
         }
     };
-    if (const char *base = SDL_GetBasePath()) {
-        logo = load_png(ren, (std::string(base) + "assets/wordmark.png").c_str(),
+    {
+        const std::string base = asset_base();
+        logo = load_png(ren, (base + "assets/wordmark.png").c_str(),
                         &logo_w, &logo_h);
-        art_console = load_png(ren, (std::string(base) + "assets/console.png").c_str(),
+        art_console = load_png(ren, (base + "assets/console.png").c_str(),
                                &art_console_w, &art_console_h);
-        art_pad = load_png(ren, (std::string(base) + "assets/control-pad.png").c_str(),
+        art_pad = load_png(ren, (base + "assets/control-pad.png").c_str(),
                            &art_pad_w, &art_pad_h);
-        art_gun = load_png(ren, (std::string(base) + "assets/virtua-gun.png").c_str(),
+        art_gun = load_png(ren, (base + "assets/virtua-gun.png").c_str(),
                            &art_gun_w, &art_gun_h);
     }
 
@@ -1470,12 +1553,23 @@ int main(int argc, char **argv)
 
             else if (wstep == 3) {
                 const std::string demo = saturn::demo_disc_path();
-                ImGui::TextWrapped("A demo is included, so there is something to run "
-                                   "before you have copied anything across.");
                 ImGui::Spacing();
                 if (demo.empty()) {
-                    TextDimWrapped("This build did not ship with it.");
+                    /* Not an apology for a missing file: the phone build
+                     * leaves it out on purpose, and saying which build you are
+                     * on is more use than saying something is absent. */
+                    ImGui::TextWrapped("Nothing is bundled to run, so this step is "
+                                       "just to say what happens next.");
+                    ImGui::Spacing();
+                    TextDimWrapped("The demo disc is 83 MB of mostly CD audio and it "
+                                   "would be the whole of this download, so it ships "
+                                   "with the desktop build and not this one. Put your "
+                                   "own discs in the folder from the last step and "
+                                   "they appear on the shelf.");
                 } else {
+                    ImGui::TextWrapped("A demo is included, so there is something to "
+                                       "run before you have copied anything across.");
+                    ImGui::Spacing();
                     ImGui::TextUnformatted(saturn::demo_title());
                     TextDimWrapped("Free Saturn homebrew from the SegaXtreme "
                                    "competition. Not a Sega game, and not ours "
@@ -1617,8 +1711,18 @@ int main(int argc, char **argv)
             /* Big enough for the machine to be a photograph of a machine
              * rather than an icon of one, and never so big that the shelf
              * beneath it has nowhere to go. */
-            const float head_h = std::min(fs * 9.5f,
-                                          (float)win_h * (narrow ? 0.20f : 0.26f));
+            /* At least what the panel actually holds -- three lines and a row
+             * of buttons -- and then as much of the window as it is worth
+             * giving a photograph. A fraction of the height alone was fine
+             * until the buttons grew for touch, at which point the panel
+             * sprouted a scrollbar on the one screen that should never need
+             * one. */
+            const float head_need = ImGui::GetTextLineHeightWithSpacing() * 3.0f
+                                  + ImGui::GetFrameHeightWithSpacing()
+                                  + ImGui::GetStyle().WindowPadding.y * 2.0f;
+            const float head_h = std::max(head_need,
+                                          std::min(fs * 9.5f,
+                                                   (float)win_h * (narrow ? 0.20f : 0.26f)));
             /* A short screen has no spare rows for a picture of a console. */
             const bool show_console_art = art_console && art_console_h > 0 &&
                                           !narrow && !shortscr;
@@ -2000,11 +2104,13 @@ int main(int argc, char **argv)
                         ImGui::EndCombo();
                     }
                 }
-                ImGui::SameLine();
-                TextDim("%zu game%s in %s", games.size(),
-                        games.size() == 1 ? "" : "s",
-                        cfg.disc_root.empty() ? "(no folder set)"
-                                              : cfg.disc_root.c_str());
+                /* On its own line. Beside the buttons it was the first thing
+                 * to be cut off when the font grew, and a path that ends in
+                 * "(no folder s" is worse than no path at all. */
+                TextDimWrappedF("%zu game%s in %s", games.size(),
+                                games.size() == 1 ? "" : "s",
+                                cfg.disc_root.empty() ? "(no folder set)"
+                                                      : cfg.disc_root.c_str());
                 ImGui::Separator();
 
                 /* Which initials there is anything under, in order. */
