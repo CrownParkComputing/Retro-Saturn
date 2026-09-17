@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Adaptive layers, because a launcher on Android 8 or later given only a
+  bitmap applies the legacy treatment: it shrinks the picture, centres it on
+  a WHITE plate and masks that. There is no way to opt out, and it is why the
+  icon had a white border around a small logo.
+
+  The background carries the artwork and bleeds to all four edges; the mark
+  itself sits inside the central 72dp that survives every mask shape.
+-->
+<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+    <background android:drawable="@mipmap/ic_launcher_background" />
+    <foreground android:drawable="@mipmap/ic_launcher_foreground" />
+</adaptive-icon>

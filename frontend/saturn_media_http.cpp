@@ -23,7 +23,13 @@
 
 /* minizip, for the zip the server builds around a download. Ymir vendors
  * libchdr and therefore zlib already; minizip is zlib's own contrib. */
+/* Packaged as <minizip/unzip.h> on a desktop and taken straight from zlib's
+ * contrib directory on Android, where there is no minizip package to install. */
+#if defined(__ANDROID__)
+#include "minizip/unzip.h"
+#else
 #include <minizip/unzip.h>
+#endif
 
 #include <SDL3/SDL.h>
 #include <curl/curl.h>

@@ -2944,204 +2944,95 @@ int main(int argc, char **argv)
 
                 {
                     if (face == Face::Paths) {
+                        /* Three paths and the buttons that set them. The
+                         * reasoning that used to be printed under each one is
+                         * in the tooltips and in the wizard, which is where
+                         * somebody meets these for the first time. */
+                        auto why = [&](const char *text) {
+                            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", text);
+                        };
+
                         ImGui::Spacing();
                         col_begin("##pathcols");
+
                         ImGui::TextUnformatted("BIOS");
-                        TextDimWrapped("The Saturn will not start without one, and this "
-                                       "app does not include it -- it is Sega's. Point "
-                                       "this at the ROM you dumped from your own "
-                                       "console.");
                         static char bios_buf[1024];
                         static bool primed = false;
-                        if (!primed) {
-                            SDL_strlcpy(bios_buf, cfg.bios_path.c_str(), sizeof bios_buf);
-                            primed = true;
-                        }
-                        /* In one column the field and its button sit on a
-                         * line together; in two there is no room, and the
-                         * button went off the edge of the column entirely. */
-                        ImGui::SetNextItemWidth(two_col ? -FLT_MIN : fw * 0.6f);
+                        if (!primed) { SDL_strlcpy(bios_buf, cfg.bios_path.c_str(),
+                                                   sizeof bios_buf); primed = true; }
+                        ImGui::SetNextItemWidth(-FLT_MIN);
                         if (ImGui::InputText("##bios", bios_buf, sizeof bios_buf)) {
                             cfg.bios_path = bios_buf;
                             load_bios();
                             saturn::save_app_config(cfg_path, cfg);
                         }
+                        why("512 KB, dumped from a console you own. This app does not "
+                            "include one.");
                         if (saturn::pickers_usable()) {
-                            if (!two_col) ImGui::SameLine();
                             ImGui::BeginDisabled(saturn::pick_in_progress());
                             if (ImGui::Button("Browse...")) saturn::begin_pick_file();
                             ImGui::EndDisabled();
                         } else if (ImGui::Button("Find the BIOS")) {
-                            const std::string b = saturn::find_bios_in(cfg.disc_root);
-                            if (!b.empty()) {
-                                cfg.bios_path = b;
-                                SDL_strlcpy(bios_buf, b.c_str(), sizeof bios_buf);
-                                load_bios();
-                                saturn::save_app_config(cfg_path, cfg);
-                            }
+                            adopt_bios_from_discs();
+                            SDL_strlcpy(bios_buf, cfg.bios_path.c_str(), sizeof bios_buf);
                         }
+                        ImGui::SameLine();
                         if (bios_loaded) {
-                            ImGui::PushStyleColor(ImGuiCol_Text,
-                                                  ImVec4(0.55f, 0.85f, 0.55f, 1.0f));
+                            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.55f, 0.85f, 0.55f, 1.0f));
                             ImGui::TextUnformatted("loaded");
-                            ImGui::PopStyleColor();
                         } else {
-                            ImGui::PushStyleColor(ImGuiCol_Text,
-                                                  ImVec4(1.0f, 0.75f, 0.3f, 1.0f));
-                            ImGui::TextUnformatted(cfg.bios_path.empty()
-                                                   ? "not set" : "not readable");
-                            ImGui::PopStyleColor();
+                            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.75f, 0.3f, 1.0f));
+                            ImGui::TextUnformatted(cfg.bios_path.empty() ? "not set"
+                                                                         : "not readable");
                         }
+                        ImGui::PopStyleColor();
 
-                        ImGui::Spacing(); ImGui::Separator(); ImGui::Spacing();
-                        ImGui::TextUnformatted("Discs folder");
+                        ImGui::Spacing();
+                        ImGui::TextUnformatted("Discs");
                         static char root_buf[1024];
                         static bool root_primed = false;
-                        if (!root_primed) {
-                            SDL_strlcpy(root_buf, cfg.disc_root.c_str(), sizeof root_buf);
-                            root_primed = true;
-                        }
-                        ImGui::SetNextItemWidth(two_col ? -FLT_MIN : fw * 0.6f);
+                        if (!root_primed) { SDL_strlcpy(root_buf, cfg.disc_root.c_str(),
+                                                        sizeof root_buf); root_primed = true; }
+                        ImGui::SetNextItemWidth(-FLT_MIN);
                         if (ImGui::InputText("##root", root_buf, sizeof root_buf)) {
                             cfg.disc_root = root_buf;
                             saturn::save_app_config(cfg_path, cfg);
                             rescan();
                         }
+                        why("One folder of disc images. Not a folder of folders: a "
+                            "Saturn game is a disc.");
                         if (saturn::pickers_usable()) {
-                            if (!two_col) ImGui::SameLine();
                             ImGui::BeginDisabled(saturn::pick_in_progress());
                             if (ImGui::Button("Browse...##root")) saturn::begin_pick_folder();
                             ImGui::EndDisabled();
-                        } else {
-                            /* The folders that need no permission, as buttons.
-                             * Typing a path on a phone keyboard is not a route
-                             * anybody should have to take. */
-                            for (const std::string &r : saturn::candidate_disc_roots()) {
-                                ImGui::PushID(r.c_str());
-                                if (ImGui::Button(r.c_str())) {
-                                    cfg.disc_tree.clear();
-                                    cfg.disc_root = r;
-                                    SDL_strlcpy(root_buf, r.c_str(), sizeof root_buf);
-                                    SDL_CreateDirectory(r.c_str());
+                        } else if (saturn::saf_available()) {
+                            if (ImGui::Button("Choose a folder...")) saturn::saf_pick();
+                            for (const saturn::SafTree &t : saturn::saf_trees()) {
+                                ImGui::PushID(t.uri.c_str());
+                                const bool in_use = t.uri == cfg.disc_tree ||
+                                    (!t.path.empty() && !cfg.disc_root.empty() &&
+                                     cfg.disc_root.rfind(t.path, 0) == 0);
+                                if (in_use) TextDimWrappedF("using %s", t.name.c_str());
+                                else if (ImGui::Button(t.name.c_str())) {
+                                    adopt_tree(t.uri);
+                                    SDL_strlcpy(root_buf, cfg.disc_root.c_str(), sizeof root_buf);
+                                    resolve_saves();
                                     rescan();
                                     adopt_bios_from_discs();
-                                    SDL_strlcpy(bios_buf, cfg.bios_path.c_str(),
-                                                sizeof bios_buf);
-                                    saturn::save_app_config(cfg_path, cfg);
+                                    SDL_strlcpy(bios_buf, cfg.bios_path.c_str(), sizeof bios_buf);
                                 }
                                 ImGui::PopID();
                             }
-                            if (saturn::saf_available()) {
-                                ImGui::Spacing();
-                                if (ImGui::Button("Choose a folder...")) saturn::saf_pick();
-                                TextDimWrapped("Anywhere on the device or a memory "
-                                               "card. This app makes bios, cd and "
-                                               "saves inside whatever you choose, and "
-                                               "uses nothing else.");
-                                for (const saturn::SafTree &t : saturn::saf_trees()) {
-                                    ImGui::PushID(t.uri.c_str());
-                                    const bool in_use =
-                                        t.uri == cfg.disc_tree ||
-                                        (!t.path.empty() &&
-                                         cfg.disc_root.rfind(t.path, 0) == 0);
-                                    if (in_use) {
-                                        TextDimWrappedF("using %s", t.name.c_str());
-                                    } else if (ImGui::Button(t.name.c_str())) {
-                                        adopt_tree(t.uri);
-                                        SDL_strlcpy(root_buf, cfg.disc_root.c_str(),
-                                                    sizeof root_buf);
-                                        resolve_saves();
-                                        rescan();
-                                        adopt_bios_from_discs();
-                                        SDL_strlcpy(bios_buf, cfg.bios_path.c_str(),
-                                                    sizeof bios_buf);
-                                    }
-                                    ImGui::PopID();
-                                }
-                            }
                         }
-
-                        col_next();
-                        ImGui::TextUnformatted("RetroMedia");
-                        if (!saturn::media_available()) {
-                            TextDimWrapped("Not built into this version.");
-                        } else if (account.signed_in) {
-                            TextDim("Signed in as %s%s", account.email.c_str(),
-                                    account.is_admin ? " (administrator)" : "");
-                            TextDimWrapped(account.is_admin
-                                ? "The Downloads tab is yours."
-                                : "Cover art only -- downloading discs needs an "
-                                  "administrator account.");
-                            if (ImGui::Button("Sign out##setup")) {
-                                saturn::media_begin_logout();
-                                catalogue.clear();
-                            }
-                        } else {
-                            TextDimWrapped("An account at "
-                                           "media.crownparkcomputing.com. An ordinary "
-                                           "email and password -- there is no Google "
-                                           "account involved.");
-                            ImGui::SetNextItemWidth(-FLT_MIN);
-                            ImGui::InputTextWithHint("##email", "email",
-                                                     media_email, sizeof media_email);
-                            ImGui::SetNextItemWidth(
-                                two_col ? -(ImGui::CalcTextSize("Sign in").x +
-                                            ImGui::GetStyle().FramePadding.x * 2.0f +
-                                            ImGui::GetStyle().ItemSpacing.x)
-                                        : fw * 0.42f);
-                            const bool enter = ImGui::InputTextWithHint(
-                                "##pass", "password", media_pass, sizeof media_pass,
-                                ImGuiInputTextFlags_Password |
-                                ImGuiInputTextFlags_EnterReturnsTrue);
-                            ImGui::SameLine();
-                            ImGui::BeginDisabled(media_busy || !media_email[0] ||
-                                                 !media_pass[0]);
-                            const bool go = ImGui::Button("Sign in");
-                            ImGui::EndDisabled();
-                            if ((enter || go) && media_email[0] && media_pass[0]) {
-                                media_busy = true;
-                                saturn::media_begin_login(media_email, media_pass);
-                                /* The password leaves this buffer the moment the
-                                 * request has it, and again when the answer
-                                 * arrives. It is never written anywhere. */
-                                SDL_memset(media_pass, 0, sizeof media_pass);
-                            }
-                        }
-                        if (!media_message.empty()) TextDim("%s", media_message.c_str());
-
-                        ImGui::Spacing(); ImGui::Separator(); ImGui::Spacing();
-                        ImGui::TextUnformatted("Saves folder");
-                        TextDimWrapped("The Saturn's battery memory and the save "
-                                       "states. Kept outside the app on purpose: "
-                                       "anything inside it is deleted when the app is "
-                                       "uninstalled, and this is the one folder you "
-                                       "would not want to lose. Leave it empty for a "
-                                       "Saves folder beside the discs.");
-                        static char saves_buf[1024];
-                        static bool saves_primed = false;
-                        if (!saves_primed) {
-                            SDL_strlcpy(saves_buf, cfg.saves_dir.c_str(), sizeof saves_buf);
-                            saves_primed = true;
-                        }
-                        ImGui::SetNextItemWidth(-FLT_MIN);
-                        if (ImGui::InputText("##saves", saves_buf, sizeof saves_buf)) {
-                            cfg.saves_dir = saves_buf;
-                            saturn::save_app_config(cfg_path, cfg);
-                            save_bram();        /* out of the old place... */
-                            resolve_saves();
-                            load_bram();        /* ...and into the new one */
-                        }
-                        TextDim("%s", saves_dir.c_str());
-
                         {   /* Whichever dialog was opened, its answer lands here. */
                             std::string got;
                             if (saturn::take_pick(got)) {
-                                SDL_PathInfo pi;
-                                const bool isdir = SDL_GetPathInfo(got.c_str(), &pi) &&
-                                                   pi.type == SDL_PATHTYPE_DIRECTORY;
-                                if (isdir) {
+                                SDL_PathInfo info;
+                                if (SDL_GetPathInfo(got.c_str(), &info) &&
+                                    info.type == SDL_PATHTYPE_DIRECTORY) {
                                     cfg.disc_root = got;
                                     SDL_strlcpy(root_buf, got.c_str(), sizeof root_buf);
+                                    resolve_saves();
                                     rescan();
                                 } else {
                                     cfg.bios_path = got;
@@ -3152,6 +3043,25 @@ int main(int argc, char **argv)
                             }
                         }
 
+                        col_next();
+
+                        ImGui::TextUnformatted("Saves");
+                        static char saves_buf[1024];
+                        static bool saves_primed = false;
+                        if (!saves_primed) { SDL_strlcpy(saves_buf, cfg.saves_dir.c_str(),
+                                                         sizeof saves_buf); saves_primed = true; }
+                        ImGui::SetNextItemWidth(-FLT_MIN);
+                        if (ImGui::InputText("##saves", saves_buf, sizeof saves_buf)) {
+                            cfg.saves_dir = saves_buf;
+                            saturn::save_app_config(cfg_path, cfg);
+                            save_bram();
+                            resolve_saves();
+                            load_bram();
+                        }
+                        why("The Saturn's battery memory and the save states. Kept "
+                            "outside the app, because anything inside it goes when the "
+                            "app is uninstalled. Empty means beside the discs.");
+                        TextDim("%s", saves_dir.c_str());
                         col_end();
                     }
 
@@ -3314,64 +3224,67 @@ int main(int argc, char **argv)
                     }
 
                     if (face == Face::Picture) {
+                        /*
+                         * Switches, not an essay.
+                         *
+                         * Every control here had a paragraph under it saying
+                         * why it exists, which meant the page scrolled and the
+                         * thing you came to change was below the fold. The
+                         * reasoning lives in the comments and in the commit
+                         * that added each one; the screen just needs the
+                         * choice. A hover tooltip carries the one sentence
+                         * worth keeping.
+                         */
+                        auto why = [&](const char *text) {
+                            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", text);
+                        };
+
                         ImGui::Spacing();
                         col_begin("##picturecols");
+
                         ImGui::TextUnformatted("Smoothing");
                         {
                             int sc = s.scaling;
                             dirty |= ImGui::RadioButton("Automatic", &sc, 0);
+                            why("Hard pixels when the window is a whole multiple of "
+                                "the picture, smooth when it is not.");
                             ImGui::SameLine();
                             dirty |= ImGui::RadioButton("Sharp", &sc, 1);
                             ImGui::SameLine();
                             dirty |= ImGui::RadioButton("Smooth", &sc, 2);
                             s.scaling = sc;
                         }
-                        TextDimWrapped("Automatic keeps hard pixels when the window is "
-                                       "a whole multiple of the picture and smooths it "
-                                       "when it is not. At an awkward size, hard pixels "
-                                       "make some rows a pixel taller than others, "
-                                       "which shows as faint banding across the "
-                                       "screen.");
 
-                        ImGui::Spacing(); ImGui::Separator(); ImGui::Spacing();
+                        ImGui::Spacing();
                         ImGui::TextUnformatted("Shape");
                         {
                             int as_ = s.aspect;
                             dirty |= ImGui::RadioButton("4:3", &as_, 0);
+                            why("The shape a Saturn was drawn for.");
                             ImGui::SameLine();
                             dirty |= ImGui::RadioButton("Fill the window", &as_, 1);
                             s.aspect = as_;
                         }
-                        TextDimWrapped("4:3 is the shape a Saturn was drawn for. Its "
-                                       "modes are not square pixels, so filling the "
-                                       "window stretches them.");
                         ImGui::Spacing();
-                        dirty |= ImGui::Checkbox("Whole-number scaling",
-                                                 &s.integer_scale);
-                        TextDimWrapped("Every pixel exactly the same size, with a "
-                                       "border where the window does not divide "
-                                       "evenly. It overrides the shape above -- 320x224 "
-                                       "is not 4:3 -- so it trades the right geometry "
-                                       "for the right pixels.");
+                        dirty |= ImGui::Checkbox("Whole-number scaling", &s.integer_scale);
+                        why("Every pixel the same size, with a border. Overrides the "
+                            "shape: 320x224 is not 4:3.");
 
                         col_next();
-                        ImGui::TextUnformatted("Light gun crosshair");
-                        ImGui::SetNextItemWidth(fw * (two_col ? 0.40f : 0.45f));
-                        dirty |= ImGui::SliderInt("##crosshair", &s.crosshair,
-                                                  50, 600, "%d%%");
-                        TextDimWrapped("Only drawn when a port is holding a Virtua "
-                                       "Gun.");
 
-                        ImGui::Spacing(); ImGui::Separator(); ImGui::Spacing();
+                        ImGui::TextUnformatted("Light gun crosshair");
+                        ImGui::SetNextItemWidth(fw * (two_col ? 0.40f : 0.55f));
+                        dirty |= ImGui::SliderInt("##crosshair", &s.crosshair, 50, 600, "%d%%");
+                        why("Only drawn when a port is holding a Virtua Gun.");
+
+                        ImGui::Spacing();
                         ImGui::TextUnformatted("Rendering");
                         dirty |= ImGui::Checkbox("Threaded VDP1", &s.threaded_vdp1);
                         dirty |= ImGui::Checkbox("Threaded VDP2", &s.threaded_vdp2);
-                        dirty |= ImGui::Checkbox("Threaded deinterlacer",
-                                                 &s.threaded_deinterlace);
-                        TextDimWrapped("The two video processors are most of this "
-                                       "emulator's work, so they run on their own "
-                                       "threads. Turn one off only to find out whether "
-                                       "it is the cause of something.");
+                        dirty |= ImGui::Checkbox("Threaded deinterlacer", &s.threaded_deinterlace);
+                        why("The video processors are most of this emulator's work. "
+                            "Turn one off only to find out whether it is the cause of "
+                            "something.");
                         col_end();
                     }
 
