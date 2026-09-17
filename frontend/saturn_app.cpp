@@ -344,6 +344,7 @@ int main(int argc, char **argv)
                                     s.threaded_deinterlace);
         ymir_bridge_set_core_option(ymir, YMIR_OPT_AUDIO_INTERPOLATION,
                                     s.audio_interpolation);
+        ymir_bridge_set_audio_muted(ymir, s.audio_muted);
         ymir_bridge_set_core_option(ymir, YMIR_OPT_CD_READ_SPEED, s.cd_read_speed);
         ymir_bridge_set_core_option(ymir, YMIR_OPT_CDBLOCK_LLE, s.cdblock_lle);
     };
@@ -689,9 +690,8 @@ int main(int argc, char **argv)
                      */
                     frame = SDL_CreateTexture(ren, SDL_PIXELFORMAT_XBGR8888,
                                               SDL_TEXTUREACCESS_STREAMING, w, h);
-                    /* Nearest: a Saturn's 320x224 is hard pixels, and a
-                     * filtered one is a blur of them. */
-                    if (frame) SDL_SetTextureScaleMode(frame, SDL_SCALEMODE_NEAREST);
+                    /* The scale mode is chosen per frame, from how the
+                     * picture actually fits the window -- see the blit. */
                     frame_w = w; frame_h = h;
                 }
                 if (frame) SDL_UpdateTexture(frame, nullptr, pix, w * 4);
@@ -1239,6 +1239,46 @@ int main(int argc, char **argv)
 
                     if (ImGui::BeginTabItem("Picture")) {
                         ImGui::Spacing();
+                        ImGui::TextUnformatted("Smoothing");
+                        {
+                            int sc = s.scaling;
+                            dirty |= ImGui::RadioButton("Automatic", &sc, 0);
+                            ImGui::SameLine();
+                            dirty |= ImGui::RadioButton("Sharp", &sc, 1);
+                            ImGui::SameLine();
+                            dirty |= ImGui::RadioButton("Smooth", &sc, 2);
+                            s.scaling = sc;
+                        }
+                        TextDimWrapped("Automatic keeps hard pixels when the window is "
+                                       "a whole multiple of the picture and smooths it "
+                                       "when it is not. At an awkward size, hard pixels "
+                                       "make some rows a pixel taller than others, "
+                                       "which shows as faint banding across the "
+                                       "screen.");
+
+                        ImGui::Spacing(); ImGui::Separator(); ImGui::Spacing();
+                        ImGui::TextUnformatted("Shape");
+                        {
+                            int as_ = s.aspect;
+                            dirty |= ImGui::RadioButton("4:3", &as_, 0);
+                            ImGui::SameLine();
+                            dirty |= ImGui::RadioButton("Fill the window", &as_, 1);
+                            s.aspect = as_;
+                        }
+                        TextDimWrapped("4:3 is the shape a Saturn was drawn for. Its "
+                                       "modes are not square pixels, so filling the "
+                                       "window stretches them.");
+                        ImGui::Spacing();
+                        dirty |= ImGui::Checkbox("Whole-number scaling",
+                                                 &s.integer_scale);
+                        TextDimWrapped("Every pixel exactly the same size, with a "
+                                       "border where the window does not divide "
+                                       "evenly. It overrides the shape above -- 320x224 "
+                                       "is not 4:3 -- so it trades the right geometry "
+                                       "for the right pixels.");
+
+                        ImGui::Spacing(); ImGui::Separator(); ImGui::Spacing();
+                        ImGui::TextUnformatted("Rendering");
                         dirty |= ImGui::Checkbox("Threaded VDP1", &s.threaded_vdp1);
                         dirty |= ImGui::Checkbox("Threaded VDP2", &s.threaded_vdp2);
                         dirty |= ImGui::Checkbox("Threaded deinterlacer",
@@ -1260,6 +1300,32 @@ int main(int argc, char **argv)
                         TextDimWrapped("The SCSP interpolates linearly, which makes the "
                                        "accurate choice the one that sounds like an "
                                        "improvement.");
+
+                        ImGui::Spacing(); ImGui::Separator(); ImGui::Spacing();
+                        dirty |= ImGui::Checkbox("Mute", &s.audio_muted);
+
+                        /*
+                         * A meter, because "there is no sound" is otherwise
+                         * unanswerable from inside the app. If this moves, the
+                         * Saturn is making sound and the fault is past us --
+                         * the output device, its volume, or the mixer. If it
+                         * sits at nothing while a game plays, the fault is
+                         * ours.
+                         */
+                        const int lvl = std::clamp(ymir_bridge_get_audio_level(ymir), 0, 100);
+                        char meter[32];
+                        if (lvl > 0) std::snprintf(meter, sizeof meter, "%d%%", lvl);
+                        else         std::snprintf(meter, sizeof meter, "silent");
+                        ImGui::Spacing();
+                        ImGui::TextUnformatted("Output");
+                        ImGui::ProgressBar(lvl / 100.0f, ImVec2(cw * 0.5f, 0.0f), meter);
+                        ImGui::SameLine();
+                        ImGui::Text("%d ms behind", ymir_bridge_get_audio_queue_ms(ymir));
+                        TextDimWrapped("The level leaving the emulator, and how far the "
+                                       "sound trails the picture. The machine paces "
+                                       "itself to hold that around 60 ms; if it climbs "
+                                       "and stays climbed, the emulator is running "
+                                       "faster than the sound card can take it.");
                         ImGui::EndTabItem();
                     }
 
@@ -1421,11 +1487,51 @@ int main(int argc, char **argv)
         SDL_RenderClear(ren);
 
         if (running_view && frame) {
-            /* 4:3, whatever the window is. The Saturn's modes are not square
-             * pixels and a stretched one is simply the wrong picture. */
-            const float target = 4.0f / 3.0f;
-            float w = (float)win_w, h = w / target;
-            if (h > (float)win_h) { h = (float)win_h; w = h * target; }
+            /*
+             * Fitted, then filtered according to how it fitted.
+             *
+             * 4:3 by default, because the Saturn's modes are not square pixels
+             * and a stretched picture is simply the wrong one.
+             *
+             * The filtering is the part worth explaining, and it is lifted
+             * from psx-core, which had the same problem: a 320x224 picture in
+             * a window that is not a whole multiple of it, blitted with hard
+             * pixels, gives some rows one pixel and others two. That reads as
+             * faint horizontal banding across the whole screen and it is the
+             * commonest way an emulator looks worse than the machine. So
+             * nearest is used where it is exactly right -- an integer scale --
+             * and bilinear everywhere else.
+             */
+            const saturn::Settings &vs = cfg.machine;
+            float w = (float)win_w, h = (float)win_h;
+            if (vs.aspect == 0) {
+                const float target = 4.0f / 3.0f;
+                h = w / target;
+                if (h > (float)win_h) { h = (float)win_h; w = h * target; }
+            }
+
+            if (vs.integer_scale && frame_w > 0 && frame_h > 0) {
+                /* The largest whole multiple that still fits. Every pixel the
+                 * same size, and a border rather than a compromise. */
+                int k = (int)std::min(w / (float)frame_w, h / (float)frame_h);
+                if (k < 1) k = 1;
+                w = (float)(frame_w * k);
+                h = (float)(frame_h * k);
+            }
+
+            bool linear;
+            switch (vs.scaling) {
+            case 1:  linear = false; break;
+            case 2:  linear = true;  break;
+            default:
+                /* Auto: hard pixels only when the scale divides evenly. */
+                linear = frame_w <= 0 || frame_h <= 0 ||
+                         (int)w % frame_w != 0 || (int)h % frame_h != 0;
+                break;
+            }
+            SDL_SetTextureScaleMode(frame, linear ? SDL_SCALEMODE_LINEAR
+                                                  : SDL_SCALEMODE_NEAREST);
+
             const SDL_FRect dst = { ((float)win_w - w) * 0.5f,
                                     ((float)win_h - h) * 0.5f, w, h };
             SDL_RenderTexture(ren, frame, nullptr, &dst);

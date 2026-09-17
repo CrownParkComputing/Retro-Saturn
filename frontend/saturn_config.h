@@ -63,6 +63,12 @@ struct Settings {
      * the accurate one despite sounding like the "enhanced" option. */
     int  audio_interpolation = 1;
 
+    /* Silence, kept across restarts. Worth having as a setting rather than a
+     * transient toggle: somebody who plays with the sound off wants it off
+     * tomorrow too, and somebody who thinks the app is broken can see the
+     * switch and rule it out. */
+    bool audio_muted = false;
+
     /* 2 is the real drive's speed. Faster cuts loading, and a few titles that
      * stream from the disc in time with the music notice. */
     int  cd_read_speed = 2;
@@ -75,6 +81,31 @@ struct Settings {
      * time it is without ever being told; 1 emulates the RTC from the bus
      * clock, which is what a run that must be reproducible needs. */
     int  rtc_mode = 0;
+
+    /* ---- how the picture reaches the screen ----
+     *
+     * The same treatment psx-core applies, and for the same reason. A Saturn
+     * draws 320x224 and a window is almost never a whole multiple of that;
+     * blitting hard pixels at a fractional scale makes some rows one pixel
+     * tall and others two, which reads as faint horizontal banding across the
+     * whole picture. It is the single most common way an emulator looks worse
+     * than the machine it is emulating.
+     *
+     *   0 Auto   hard pixels when the scale divides evenly, smooth when it
+     *            does not -- sharp where sharp is correct, and no banding
+     *            where it is not
+     *   1 Sharp  always nearest, banding and all, for anyone who wants it
+     *   2 Smooth always bilinear
+     */
+    int  scaling = 0;
+
+    /* Snap the picture to a whole multiple of itself and accept the border.
+     * Every pixel the same size, which is the only way to be certain. */
+    bool integer_scale = false;
+
+    /* 0 = 4:3, the shape a Saturn was drawn for. 1 = fill the window, for a
+     * display where the border matters more than the geometry. */
+    int  aspect = 0;
 
     /* ---- the ports ----
      *
@@ -91,7 +122,9 @@ struct Settings {
                threaded_vdp2 == o.threaded_vdp2 &&
                threaded_deinterlace == o.threaded_deinterlace &&
                audio_interpolation == o.audio_interpolation &&
-               cd_read_speed == o.cd_read_speed && cdblock_lle == o.cdblock_lle && rtc_mode == o.rtc_mode &&
+               audio_muted == o.audio_muted &&
+               cd_read_speed == o.cd_read_speed && cdblock_lle == o.cdblock_lle && rtc_mode == o.rtc_mode && scaling == o.scaling &&
+               integer_scale == o.integer_scale && aspect == o.aspect &&
                port1 == o.port1 && port2 == o.port2;
     }
 };
