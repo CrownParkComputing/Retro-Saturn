@@ -102,6 +102,7 @@ bool load_app_config(const std::string &path, AppConfig &out)
 
     out.disc_root   = str_of(kv, "disc_root", out.disc_root);
     out.bios_path   = str_of(kv, "bios_path", out.bios_path);
+    out.saves_dir   = str_of(kv, "saves_dir", out.saves_dir);
     out.wizard_done = bool_of(kv, "wizard_done", false);
 
     Settings &s = out.machine;
@@ -123,6 +124,8 @@ bool load_app_config(const std::string &path, AppConfig &out)
     if (s.scaling < 0 || s.scaling > 2) s.scaling = 0;
     s.integer_scale        = bool_of(kv, "integer_scale", s.integer_scale);
     s.aspect               = int_of(kv, "aspect", s.aspect) ? 1 : 0;
+    s.crosshair            = int_of(kv, "crosshair", s.crosshair);
+    if (s.crosshair < 50 || s.crosshair > 600) s.crosshair = 250;
     s.port1                = peripheral_of(kv, "port1", s.port1);
     s.port2                = peripheral_of(kv, "port2", s.port2);
     return true;
@@ -134,6 +137,7 @@ bool save_app_config(const std::string &path, const AppConfig &cfg)
     std::string t = "# Retro-Saturn settings\n";
     t += "disc_root=" + cfg.disc_root + "\n";
     t += "bios_path=" + cfg.bios_path + "\n";
+    t += "saves_dir=" + cfg.saves_dir + "\n";
     t += "wizard_done="; t += cfg.wizard_done ? "1" : "0"; t += "\n";
     t += "region_auto="; t += s.region_auto ? "1" : "0"; t += "\n";
     t += "video_standard=" + std::to_string(s.video_standard) + "\n";
@@ -150,6 +154,7 @@ bool save_app_config(const std::string &path, const AppConfig &cfg)
     t += "scaling=" + std::to_string(s.scaling) + "\n";
     t += "integer_scale="; t += s.integer_scale ? "1" : "0"; t += "\n";
     t += "aspect=" + std::to_string(s.aspect) + "\n";
+    t += "crosshair=" + std::to_string(s.crosshair) + "\n";
     t += "port1=" + std::to_string((int)s.port1) + "\n";
     t += "port2=" + std::to_string((int)s.port2) + "\n";
     return write_file(path, t);

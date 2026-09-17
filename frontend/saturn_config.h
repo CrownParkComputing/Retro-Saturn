@@ -107,6 +107,11 @@ struct Settings {
      * display where the border matters more than the geometry. */
     int  aspect = 0;
 
+    /* Crosshair size, as a percentage of a sensible default. A light gun
+     * pointer has to be found on a busy screen in a hurry, and how big that
+     * needs to be depends on the screen and the eyes, so it is a setting. */
+    int  crosshair = 250;
+
     /* ---- the ports ----
      *
      * Two of them, because the console has two, and they are not a setting
@@ -125,6 +130,7 @@ struct Settings {
                audio_muted == o.audio_muted &&
                cd_read_speed == o.cd_read_speed && cdblock_lle == o.cdblock_lle && rtc_mode == o.rtc_mode && scaling == o.scaling &&
                integer_scale == o.integer_scale && aspect == o.aspect &&
+               crosshair == o.crosshair &&
                port1 == o.port1 && port2 == o.port2;
     }
 };
@@ -137,6 +143,21 @@ struct AppConfig {
     /* The Saturn will not start without one, and we do not ship one -- it is
      * Sega's. Held as a path so the wizard can check it is still there. */
     std::string bios_path;
+
+    /*
+     * Where game saves live -- the Saturn's battery RAM and our save states.
+     *
+     * Deliberately NOT inside the app's own storage. On Android that is wiped
+     * by an uninstall and is not somewhere a person can back up, so a
+     * reinstall would take every save file with it. This defaults to a folder
+     * beside the discs, which is a place the user chose and granted, which
+     * survives an update or a reinstall, and which they can copy off the
+     * device themselves.
+     *
+     * Empty means "work it out from disc_root", so an existing config picks
+     * up the default without a migration step.
+     */
+    std::string saves_dir;
 
     bool wizard_done = false;
     Settings machine;

@@ -204,11 +204,25 @@ const KeyBind kKeyMap[] = {
  * A real pad, mapped to the Saturn's.
  *
  * The Saturn has six face buttons in two rows -- A B C along the bottom, X Y Z
- * along the top -- and an L and R. A modern pad has four face buttons and four
- * shoulders, so the two rows have to borrow: the four faces are A B X Y, and
- * the bumpers carry C and Z. That is the arrangement every Saturn emulator has
- * settled on, and it puts the six-button fighting layout under the six buttons
- * a thumb can reach.
+ * along the top -- plus L and R shoulders. A modern pad has four faces, two
+ * bumpers and two triggers, so something has to give.
+ *
+ * The bumpers carry the Saturn's own shoulders, L and R, which is where a hand
+ * expects them: in Daytona they are the gear change, and a gear change under a
+ * bumper is right where every racing game since has put it. The bumpers used
+ * to carry C and Z, which put two face buttons on the shoulders and left the
+ * Saturn's actual shoulders on the triggers -- the wrong way round, and it
+ * felt it.
+ *
+ * The triggers are the pedals: right for accelerate, left for brake, which on
+ * the Saturn pad are A and B. They are a second way of pressing those two, not
+ * a replacement -- A and B stay on the face buttons as well, so a game that
+ * wants them as buttons still has them under a thumb. That is why presses are
+ * tracked per source below: two controls driving one Saturn button must not
+ * cancel each other when one is released.
+ *
+ * C and Z go to the stick clicks. Nothing else is left, and a six-button game
+ * that needs them is being played on the wrong pad anyway.
  */
 struct PadBind { SDL_GamepadButton pad; YmirButton button; };
 const PadBind kPadMap[] = {
@@ -221,14 +235,85 @@ const PadBind kPadMap[] = {
     { SDL_GAMEPAD_BUTTON_EAST,           YMIR_BUTTON_B     },
     { SDL_GAMEPAD_BUTTON_WEST,           YMIR_BUTTON_X     },
     { SDL_GAMEPAD_BUTTON_NORTH,          YMIR_BUTTON_Y     },
-    { SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER, YMIR_BUTTON_C     },
-    { SDL_GAMEPAD_BUTTON_LEFT_SHOULDER,  YMIR_BUTTON_Z     },
+    { SDL_GAMEPAD_BUTTON_LEFT_SHOULDER,  YMIR_BUTTON_L     },
+    { SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER, YMIR_BUTTON_R     },
+    { SDL_GAMEPAD_BUTTON_LEFT_STICK,     YMIR_BUTTON_Z     },
+    { SDL_GAMEPAD_BUTTON_RIGHT_STICK,    YMIR_BUTTON_C     },
 };
+
+/* Left trigger brakes, right trigger accelerates. */
+const YmirButton kTriggerButton[2] = { YMIR_BUTTON_B, YMIR_BUTTON_A };
+
+/*
+ * Where the Saturn's picture lands in the window, and how it is filtered.
+ *
+ * Worked out in one place because two things need it: the blit, obviously,
+ * and the light gun, which has to turn a mouse position in the window back
+ * into a pixel on the Saturn's screen. Two copies of this arithmetic would be
+ * two copies to keep in step, and a gun that aims a few pixels off the thing
+ * you are pointing at is worse than no gun.
+ */
+struct PictureRect { float x, y, w, h; };
+
+PictureRect picture_rect(int win_w, int win_h, int fw, int fh,
+                         const saturn::Settings &s)
+{
+    float w = (float)win_w, h = (float)win_h;
+    if (s.aspect == 0) {
+        const float target = 4.0f / 3.0f;
+        h = w / target;
+        if (h > (float)win_h) { h = (float)win_h; w = h * target; }
+    }
+    if (s.integer_scale && fw > 0 && fh > 0) {
+        int k = (int)std::min(w / (float)fw, h / (float)fh);
+        if (k < 1) k = 1;
+        w = (float)(fw * k);
+        h = (float)(fh * k);
+    }
+    return { ((float)win_w - w) * 0.5f, ((float)win_h - h) * 0.5f, w, h };
+}
+
+bool picture_linear(const PictureRect &r, int fw, int fh,
+                    const saturn::Settings &s)
+{
+    switch (s.scaling) {
+    case 1:  return false;
+    case 2:  return true;
+    default:
+        /* Auto: hard pixels only when the scale divides evenly. */
+        return fw <= 0 || fh <= 0 ||
+               (int)r.w % fw != 0 || (int)r.h % fh != 0;
+    }
+}
 
 /* The triggers are axes, not buttons, so they are read rather than bound.
  * Half travel counts as pressed: an analogue trigger standing in for a digital
- * shoulder should fire where a thumb expects it to, not at the very bottom. */
+ * button should fire where a foot expects it to, not at the very bottom. */
 const Sint16 kTriggerOn = 16384;
+
+/*
+ * Which sources are holding each Saturn button down, per port.
+ *
+ * The triggers and the face buttons overlap now, and without this a driver
+ * resting on the accelerator who taps A and lets go would have the car stop:
+ * the release of one source would clear a button the other was still holding.
+ * One bit per source, and the Saturn sees the button as pressed while any bit
+ * is set.
+ */
+enum { kSrcButton = 1 << 0, kSrcTrigger = 1 << 1, kSrcStick = 1 << 2 };
+uint8_t g_held[2][YMIR_BUTTON_COUNT] = {};
+
+void pad_press(YmirInstance *ymir, int port, YmirButton button,
+               unsigned source, bool down)
+{
+    if (port < 1 || port > 2) return;
+    uint8_t &mask = g_held[port - 1][button];
+    const uint8_t before = mask;
+    if (down) mask |= (uint8_t)source;
+    else      mask &= (uint8_t)~source;
+    if ((before != 0) != (mask != 0))
+        ymir_bridge_set_pad_button(ymir, port, button, mask != 0);
+}
 
 } /* namespace */
 
@@ -386,9 +471,83 @@ int main(int argc, char **argv)
         ymir_bridge_save_smpc_state(ymir, smpc_path.c_str());
     }
 
+    /*
+     * ---- where saves live ----
+     *
+     * Not in the app's own storage, and this is the whole point of the
+     * setting. On Android the app's storage belongs to the install: uninstall
+     * it, or sideload a new build over the top in a way Android treats as a
+     * fresh install, and every save file goes with it. It is also not
+     * somewhere a person can reach to take a backup.
+     *
+     * The discs folder is different. The user chose it and granted it, it sits
+     * outside the sandbox, it survives an update or a reinstall, and they can
+     * copy it off the device. So saves go in a folder beside the discs, and
+     * the setting exists for anyone who wants them somewhere else again.
+     *
+     * Two kinds of thing end up here and they are not the same: backup-ram.bin
+     * is the Saturn's own battery-backed memory, which is where a game writes
+     * its progress, and states/ holds our snapshots of the whole machine. The
+     * first is the one that must never be lost.
+     */
+    std::string saves_dir, states_dir, bram_path;
+    auto resolve_saves = [&] {
+        saves_dir = cfg.saves_dir;
+        if (saves_dir.empty()) {
+            saves_dir = cfg.disc_root.empty() ? (cfg_dir + "Saves")
+                                              : (cfg.disc_root + "/Saves");
+        }
+        states_dir = saves_dir + "/states";
+        bram_path  = saves_dir + "/backup-ram.bin";
+        SDL_CreateDirectory(saves_dir.c_str());
+        SDL_CreateDirectory(states_dir.c_str());
+    };
+    resolve_saves();
+
+    /* Anything written by an earlier build, brought along. The old location
+     * was inside the app, which is exactly what this change is getting away
+     * from -- leaving states behind there would be the loss this is meant to
+     * prevent. */
+    {
+        const std::string old_states = cfg_dir + "states";
+        SDL_PathInfo info;
+        if (old_states != states_dir &&
+            SDL_GetPathInfo(old_states.c_str(), &info) &&
+            info.type == SDL_PATHTYPE_DIRECTORY) {
+            int count = 0;
+            char **found = SDL_GlobDirectory(old_states.c_str(), "*", 0, &count);
+            for (int i = 0; found && i < count; ++i) {
+                const std::string from = old_states + "/" + found[i];
+                const std::string to   = states_dir + "/" + found[i];
+                if (!path_is_file(to)) SDL_RenamePath(from.c_str(), to.c_str());
+            }
+            if (found) SDL_free(found);
+            if (count > 0)
+                SDL_Log("moved %d save state(s) out of the app's own storage", count);
+        }
+    }
+
     apply_options();
     apply_ports();
     load_bios();
+
+    /*
+     * The Saturn's memory card, such as it is: 32 KiB of battery-backed SRAM
+     * inside the machine, and where every game that saves anything puts it.
+     * Nothing was loading or saving it at all, so progress was being lost on
+     * exit -- the emulator was a console with a flat battery.
+     *
+     * Loaded after the BIOS because loading the BIOS hard-resets. Not
+     * copy-on-write: writes go to the file as the game makes them, so a
+     * crash costs nothing.
+     */
+    auto load_bram = [&] {
+        ymir_bridge_load_internal_backup_memory(ymir, bram_path.c_str(), 0);
+    };
+    auto save_bram = [&] {
+        ymir_bridge_save_internal_backup_memory(ymir, bram_path.c_str());
+    };
+    load_bram();
 
     /* ---- what is in the drive ---- */
     std::string loaded_title;     /* empty = no disc */
@@ -470,9 +629,31 @@ int main(int argc, char **argv)
      * to package should make it look plainer, never stop it starting. */
     SDL_Texture *logo = nullptr;
     int logo_w = 0, logo_h = 0;
+    /* The hardware, photographed. The machine goes on the drive panel and the
+     * peripherals go on the ports, so what is plugged into the Saturn is
+     * something you recognise at a glance rather than something you read. */
+    SDL_Texture *art_console = nullptr; int art_console_w = 0, art_console_h = 0;
+    SDL_Texture *art_pad     = nullptr; int art_pad_w = 0, art_pad_h = 0;
+    SDL_Texture *art_gun     = nullptr; int art_gun_w = 0, art_gun_h = 0;
+
+    /* Which photograph belongs to a socket. Anything without one of its own
+     * borrows the pad, which is what all of them are shaped like. */
+    auto art_for = [&](saturn::Peripheral p, int *w, int *h) -> SDL_Texture * {
+        switch (p) {
+        case saturn::Peripheral::None:        *w = 0; *h = 0; return nullptr;
+        case saturn::Peripheral::VirtuaGun:   *w = art_gun_w; *h = art_gun_h; return art_gun;
+        default:                              *w = art_pad_w; *h = art_pad_h; return art_pad;
+        }
+    };
     if (const char *base = SDL_GetBasePath()) {
         logo = load_png(ren, (std::string(base) + "assets/wordmark.png").c_str(),
                         &logo_w, &logo_h);
+        art_console = load_png(ren, (std::string(base) + "assets/console.png").c_str(),
+                               &art_console_w, &art_console_h);
+        art_pad = load_png(ren, (std::string(base) + "assets/control-pad.png").c_str(),
+                           &art_pad_w, &art_pad_h);
+        art_gun = load_png(ren, (std::string(base) + "assets/virtua-gun.png").c_str(),
+                           &art_gun_w, &art_gun_h);
     }
 
     /* ---- the picture ---- */
@@ -514,10 +695,88 @@ int main(int argc, char **argv)
     int  wstep = 0;
     bool running_view = loaded_game_index >= 0;   /* given a disc: play it */
     bool show_pause = false;
+
+    /*
+     * The machine only runs while you are looking at it.
+     *
+     * It used to keep running behind the shelf, which you could hear: a game
+     * carried on playing its music while you browsed for another one. It also
+     * burned a core for nothing. The pause stops the audio device as well as
+     * the emulation, and the mailbox is still served while paused, so swapping
+     * a disc or saving a state from the menu still works.
+     */
+    bool machine_running = running_view;
+    ymir_bridge_set_presentation_paused(ymir, machine_running ? 0 : 1);
+
+    /*
+     * The gun, and the mouse.
+     *
+     * A Virtua Gun is a pointing device and a host has two of them: a mouse
+     * and a finger. Both are handled the same way -- a position in window
+     * pixels and a trigger -- because from the Saturn's side there is no
+     * difference. The position is turned into a Saturn pixel at the point of
+     * use, through the same rectangle the picture is drawn into, so aiming
+     * stays honest whatever the window is doing.
+     *
+     * Right button reloads. On a real Virtua Gun reloading means pointing off
+     * the screen and pulling the trigger; on a mouse there is no off-screen
+     * worth speaking of and on a touch screen there is none at all, so it
+     * gets a button of its own.
+     */
+    struct Pointer {
+        float x = 0, y = 0;
+        bool  trigger = false, reload = false, start = false;
+        bool  seen = false;          /* has ever been pointed at the window */
+    } pointer;
+    int  mouse_dx = 0, mouse_dy = 0; /* for the Shuttle Mouse, which is relative */
+
+    /* Which port, if either, is holding a pointing device. */
+    auto port_with = [&](saturn::Peripheral want) -> int {
+        if (cfg.machine.port1 == want) return 1;
+        if (cfg.machine.port2 == want) return 2;
+        return 0;
+    };
+
+    int  state_slot = 0;
+    std::string state_message;
+    Uint64 state_message_at = 0;
+
+    auto state_path = [&](int slot) {
+        std::string stem = base_name(loaded_path);
+        const size_t dot = stem.rfind('.');
+        if (dot != std::string::npos) stem.erase(dot);
+        for (char &c : stem)
+            if (c == '/' || c == '\\' || c == ':') c = '_';
+        return states_dir + "/" + stem + ".s" + std::to_string(slot + 1);
+    };
+
+    auto say = [&](const char *what, int32_t rc) {
+        char buf[160];
+        if (rc == YMIR_OK) snprintf(buf, sizeof buf, "%s", what);
+        else               snprintf(buf, sizeof buf, "%s failed (%d)", what, rc);
+        state_message = buf;
+        state_message_at = SDL_GetTicks();
+    };
+
+    auto do_save_state = [&](int slot) {
+        if (loaded_game_index < 0) return;
+        say("State saved", ymir_bridge_save_state(ymir, state_path(slot).c_str()));
+    };
+    auto do_load_state = [&](int slot) {
+        if (loaded_game_index < 0) return;
+        if (!path_is_file(state_path(slot))) { say("Slot is empty", -1); return; }
+        say("State loaded", ymir_bridge_load_state(ymir, state_path(slot).c_str()));
+    };
     char search[96] = {0};
     bool quit = false;
 
     while (!quit) {
+        /* Read once, at the top: the events below need it too -- a touch
+         * arrives in normalised coordinates and has nothing to scale by
+         * otherwise. */
+        int win_w = 0, win_h = 0;
+        SDL_GetWindowSize(win, &win_w, &win_h);
+
         SDL_Event ev;
         while (SDL_PollEvent(&ev)) {
             ImGui_ImplSDL3_ProcessEvent(&ev);
@@ -563,14 +822,51 @@ int main(int argc, char **argv)
                 const bool down = ev.type == SDL_EVENT_KEY_DOWN;
                 if (down && ev.key.scancode == SDL_SCANCODE_ESCAPE) {
                     show_pause = true;
+                } else if (down && ev.key.scancode == SDL_SCANCODE_F5) {
+                    do_save_state(state_slot);
+                } else if (down && ev.key.scancode == SDL_SCANCODE_F8) {
+                    do_load_state(state_slot);
                 } else {
                     for (const KeyBind &b : kKeyMap)
                         if (b.key == ev.key.scancode)
-                            ymir_bridge_set_pad_button(ymir, 1, b.button, down);
+                            pad_press(ymir, 1, b.button, kSrcButton, down);
                 }
             } else if (running_view && show_pause && ev.type == SDL_EVENT_KEY_DOWN &&
                        ev.key.scancode == SDL_SCANCODE_ESCAPE) {
                 show_pause = false;
+            }
+
+            /* ---- the pointer: mouse and finger, one path ---- */
+            if (running_view && !show_pause) {
+                switch (ev.type) {
+                case SDL_EVENT_MOUSE_MOTION:
+                    pointer.x = ev.motion.x; pointer.y = ev.motion.y;
+                    pointer.seen = true;
+                    mouse_dx += (int)ev.motion.xrel;
+                    mouse_dy += (int)ev.motion.yrel;
+                    break;
+                case SDL_EVENT_MOUSE_BUTTON_DOWN:
+                case SDL_EVENT_MOUSE_BUTTON_UP: {
+                    const bool down = ev.type == SDL_EVENT_MOUSE_BUTTON_DOWN;
+                    pointer.x = ev.button.x; pointer.y = ev.button.y;
+                    pointer.seen = true;
+                    if (ev.button.button == SDL_BUTTON_LEFT)   pointer.trigger = down;
+                    if (ev.button.button == SDL_BUTTON_RIGHT)  pointer.reload  = down;
+                    if (ev.button.button == SDL_BUTTON_MIDDLE) pointer.start   = down;
+                    break;
+                }
+                /* A finger IS the trigger: there is nowhere to rest a touch
+                 * without meaning to shoot, so touching aims and fires. */
+                case SDL_EVENT_FINGER_DOWN:
+                case SDL_EVENT_FINGER_MOTION:
+                case SDL_EVENT_FINGER_UP:
+                    pointer.x = ev.tfinger.x * (float)win_w;
+                    pointer.y = ev.tfinger.y * (float)win_h;
+                    pointer.seen = true;
+                    pointer.trigger = ev.type != SDL_EVENT_FINGER_UP;
+                    break;
+                default: break;
+                }
             }
 
             /* ---- a real pad ---- */
@@ -591,7 +887,7 @@ int main(int argc, char **argv)
                     } else {
                         for (const PadBind &b : kPadMap)
                             if (b.pad == ev.gbutton.button)
-                                ymir_bridge_set_pad_button(ymir, port, b.button, down);
+                                pad_press(ymir, port, b.button, kSrcButton, down);
                     }
                 }
             }
@@ -607,8 +903,8 @@ int main(int argc, char **argv)
                         bool &was = trigger_held[slot][left ? 0 : 1];
                         if (now != was) {
                             was = now;
-                            ymir_bridge_set_pad_button(
-                                ymir, port, left ? YMIR_BUTTON_L : YMIR_BUTTON_R, now);
+                            pad_press(ymir, port, kTriggerButton[left ? 0 : 1],
+                                      kSrcTrigger, now);
                         }
                     }
                 }
@@ -648,7 +944,11 @@ int main(int argc, char **argv)
                 for (int d = 0; d < 4; ++d) {
                     if (want[d] != dirHeld[i][d]) {
                         dirHeld[i][d] = want[d];
-                        ymir_bridge_set_pad_button(ymir, port, dirs[d], want[d]);
+                        /* Through the same source mask as the D-pad, so
+                         * steering with the stick while the D-pad is also
+                         * being used does not have one release cancel the
+                         * other. */
+                        pad_press(ymir, port, dirs[d], kSrcStick, want[d]);
                     }
                 }
 
@@ -666,10 +966,35 @@ int main(int argc, char **argv)
                                                 to255(rx), to255(ry));
                 }
             }
-        }
 
-        int win_w = 0, win_h = 0;
-        SDL_GetWindowSize(win, &win_w, &win_h);
+            /* ---- the pointing devices ---- */
+            if (const int gp = port_with(saturn::Peripheral::VirtuaGun)) {
+                /* Window pixels back to Saturn pixels, through the same
+                 * rectangle the picture was drawn into. */
+                const PictureRect r = picture_rect(win_w, win_h, frame_w, frame_h,
+                                                   cfg.machine);
+                int gx = 0, gy = 0;
+                if (r.w > 0 && r.h > 0 && frame_w > 0 && frame_h > 0) {
+                    gx = (int)((pointer.x - r.x) / r.w * (float)frame_w);
+                    gy = (int)((pointer.y - r.y) / r.h * (float)frame_h);
+                    gx = std::clamp(gx, 0, frame_w - 1);
+                    gy = std::clamp(gy, 0, frame_h - 1);
+                }
+                ymir_bridge_set_virtua_gun_fb_size(ymir, frame_w, frame_h);
+                ymir_bridge_set_virtua_gun_state(ymir, gp, gx, gy,
+                                                 pointer.trigger, pointer.start,
+                                                 pointer.reload);
+            }
+            if (const int mp = port_with(saturn::Peripheral::ShuttleMouse)) {
+                if (mouse_dx || mouse_dy) {
+                    ymir_bridge_set_mouse_motion(ymir, mp, mouse_dx, mouse_dy);
+                    mouse_dx = mouse_dy = 0;
+                }
+                ymir_bridge_set_mouse_button(ymir, mp, YMIR_MOUSE_LEFT,  pointer.trigger);
+                ymir_bridge_set_mouse_button(ymir, mp, YMIR_MOUSE_RIGHT, pointer.reload);
+                ymir_bridge_set_mouse_button(ymir, mp, YMIR_MOUSE_MIDDLE, pointer.start);
+            }
+        }
 
         /* ---- pull the latest frame ---- */
         if (loaded_game_index >= 0) {
@@ -985,6 +1310,16 @@ int main(int argc, char **argv)
             ImGui::BeginChild("##drive", ImVec2(0, drive_h),
                               ImGuiChildFlags_Borders);
             {
+                /* The console, sat at the left of its own panel. This strip is
+                 * the machine -- what is in the drive, and the power button --
+                 * so the machine is what it should look like. */
+                if (art_console && art_console_h > 0) {
+                    const float h = drive_h - ImGui::GetStyle().WindowPadding.y * 2.0f;
+                    const float w = h * (float)art_console_w / (float)art_console_h;
+                    ImGui::Image((ImTextureID)(intptr_t)art_console, ImVec2(w, h));
+                    ImGui::SameLine();
+                    ImGui::BeginGroup();
+                }
                 ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.42f, 0.71f, 0.97f, 1.0f));
                 ImGui::TextUnformatted(loaded_title.empty() ? "NO DISC"
                                                             : loaded_title.c_str());
@@ -1032,6 +1367,7 @@ int main(int argc, char **argv)
                         ImGui::PopID();
                     }
                 }
+                if (art_console && art_console_h > 0) ImGui::EndGroup();
             }
             ImGui::EndChild();
 
@@ -1056,9 +1392,15 @@ int main(int argc, char **argv)
 
             /* ============ the face ============ */
             /* Everything left over, minus the ports along the bottom. */
-            const float ports_h = ImGui::GetTextLineHeightWithSpacing()
-                                + ImGui::GetFrameHeightWithSpacing()
-                                + ImGui::GetStyle().WindowPadding.y * 2.0f;
+            /* Tall enough for the photograph of whatever is plugged in, which
+             * is taller than the combo beside it. Measured rather than
+             * guessed: the first version of this panel was sized for text and
+             * clipped the port 2 selector clean off the bottom. */
+            const float port_art_h = ImGui::GetFrameHeight() * 1.6f;
+            const float ports_row  = std::max(ImGui::GetFrameHeightWithSpacing(),
+                                              port_art_h + ImGui::GetStyle().ItemSpacing.y);
+            const float ports_h = ImGui::GetTextLineHeightWithSpacing() + ports_row
+                                + ImGui::GetStyle().WindowPadding.y * 3.0f;
             ImGui::BeginChild("##face",
                               ImVec2(0, -(ports_h + ImGui::GetStyle().ItemSpacing.y)),
                               ImGuiChildFlags_Borders);
@@ -1176,6 +1518,30 @@ int main(int argc, char **argv)
                         if (ImGui::Button("Browse...##root")) saturn::begin_pick_folder();
                         ImGui::EndDisabled();
 
+                        ImGui::Spacing(); ImGui::Separator(); ImGui::Spacing();
+                        ImGui::TextUnformatted("Saves folder");
+                        TextDimWrapped("The Saturn's battery memory and the save "
+                                       "states. Kept outside the app on purpose: "
+                                       "anything inside it is deleted when the app is "
+                                       "uninstalled, and this is the one folder you "
+                                       "would not want to lose. Leave it empty for a "
+                                       "Saves folder beside the discs.");
+                        static char saves_buf[1024];
+                        static bool saves_primed = false;
+                        if (!saves_primed) {
+                            SDL_strlcpy(saves_buf, cfg.saves_dir.c_str(), sizeof saves_buf);
+                            saves_primed = true;
+                        }
+                        ImGui::SetNextItemWidth(cw * 0.6f);
+                        if (ImGui::InputText("##saves", saves_buf, sizeof saves_buf)) {
+                            cfg.saves_dir = saves_buf;
+                            saturn::save_app_config(cfg_path, cfg);
+                            save_bram();        /* out of the old place... */
+                            resolve_saves();
+                            load_bram();        /* ...and into the new one */
+                        }
+                        TextDim("%s", saves_dir.c_str());
+
                         {   /* Whichever dialog was opened, its answer lands here. */
                             std::string got;
                             if (saturn::take_pick(got)) {
@@ -1276,6 +1642,14 @@ int main(int argc, char **argv)
                                        "evenly. It overrides the shape above -- 320x224 "
                                        "is not 4:3 -- so it trades the right geometry "
                                        "for the right pixels.");
+
+                        ImGui::Spacing(); ImGui::Separator(); ImGui::Spacing();
+                        ImGui::TextUnformatted("Light gun crosshair");
+                        ImGui::SetNextItemWidth(cw * 0.45f);
+                        dirty |= ImGui::SliderInt("##crosshair", &s.crosshair,
+                                                  50, 600, "%d%%");
+                        TextDimWrapped("Only drawn when a port is holding a Virtua "
+                                       "Gun.");
 
                         ImGui::Spacing(); ImGui::Separator(); ImGui::Spacing();
                         ImGui::TextUnformatted("Rendering");
@@ -1391,10 +1765,32 @@ int main(int argc, char **argv)
             {
                 const float half = (ImGui::GetContentRegionAvail().x -
                                     ImGui::GetStyle().ItemSpacing.x) * 0.5f;
+                /* Each port in a box of its own, rather than two groups on
+                 * one line: a group's height depends on what is in it, so a
+                 * port holding a photograph pushed the one beside it down by
+                 * a few pixels and the two labels no longer lined up. */
                 auto port = [&](const char *label, saturn::Peripheral &p) {
-                    ImGui::BeginGroup();
+                    ImGui::BeginChild((std::string("##box") + label).c_str(),
+                                      ImVec2(half, 0));
                     TextDim("%s", label);
-                    ImGui::SetNextItemWidth(half);
+                    /* The thing itself, beside the name of it. A photograph of
+                     * a Virtua Gun says what "Virtua Gun" means to somebody
+                     * who has never owned one. */
+                    int aw = 0, ah = 0;
+                    float combo_w = half;
+                    const float top = ImGui::GetCursorPosY();
+                    if (SDL_Texture *tex = art_for(p, &aw, &ah)) {
+                        const float w = port_art_h * (float)aw / (float)ah;
+                        ImGui::Image((ImTextureID)(intptr_t)tex, ImVec2(w, port_art_h));
+                        ImGui::SameLine();
+                        combo_w = half - w - ImGui::GetStyle().ItemSpacing.x;
+                    }
+                    /* Centred on the row, whether or not there is a photograph
+                     * on it: an empty socket that puts its selector at a
+                     * different height to the one beside it looks like a
+                     * mistake, because it is one. */
+                    ImGui::SetCursorPosY(top + (port_art_h - ImGui::GetFrameHeight()) * 0.5f);
+                    ImGui::SetNextItemWidth(combo_w);
                     const char *cur = saturn::peripheral_name(p);
                     if (ImGui::BeginCombo((std::string("##") + label).c_str(), cur)) {
                         for (int i = 0; i <= (int)saturn::Peripheral::ShuttleMouse; ++i) {
@@ -1407,7 +1803,7 @@ int main(int argc, char **argv)
                         }
                         ImGui::EndCombo();
                     }
-                    ImGui::EndGroup();
+                    ImGui::EndChild();
                 };
                 port("PORT 1", cfg.machine.port1);
                 ImGui::SameLine();
@@ -1471,14 +1867,127 @@ int main(int argc, char **argv)
                     }
                 }
                 ImGui::Separator();
+                TextDim("Save state");
+                for (int sl = 0; sl < 4; ++sl) {
+                    ImGui::PushID(100 + sl);
+                    char lbl[16];
+                    snprintf(lbl, sizeof lbl, "%d", sl + 1);
+                    if (ImGui::RadioButton(lbl, state_slot == sl)) state_slot = sl;
+                    if (sl < 3) ImGui::SameLine();
+                    ImGui::PopID();
+                }
+                /* Whether the chosen slot holds anything, said plainly: a
+                 * Load that silently does nothing is the worst outcome. */
+                if (loaded_game_index >= 0) {
+                    SDL_PathInfo info;
+                    const std::string sp = state_path(state_slot);
+                    if (SDL_GetPathInfo(sp.c_str(), &info) &&
+                        info.type == SDL_PATHTYPE_FILE) {
+                        SDL_Time t = (SDL_Time)info.modify_time;
+                        SDL_DateTime dt{};
+                        if (SDL_TimeToDateTime(t, &dt, true))
+                            TextDim("slot %d: %04d-%02d-%02d %02d:%02d",
+                                    state_slot + 1, dt.year, dt.month, dt.day,
+                                    dt.hour, dt.minute);
+                        else
+                            TextDim("slot %d: saved", state_slot + 1);
+                    } else {
+                        TextDim("slot %d: empty", state_slot + 1);
+                    }
+                }
+                const ImVec2 hw(ImGui::GetFontSize() * 5.8f, 0);
+                if (ImGui::Button("Save", hw)) do_save_state(state_slot);
+                ImGui::SameLine();
+                if (ImGui::Button("Load", hw)) {
+                    do_load_state(state_slot);
+                    show_pause = false;
+                }
+                TextDim("F5 saves, F8 loads, without opening this.");
+                /* The last word on a save or a load, for a few seconds.
+                 * Long enough to read, short enough that it is not still
+                 * there claiming something about a state you have since
+                 * replaced. */
+                if (!state_message.empty()) {
+                    if (SDL_GetTicks() - state_message_at > 5000) state_message.clear();
+                    else ImGui::TextUnformatted(state_message.c_str());
+                }
+
+                ImGui::Separator();
                 if (ImGui::Button("Back to the shelf", bw)) {
                     /* Written here too, not only at exit: an app that is
-                     * force-quit should not forget the clock. */
+                     * force-quit should not forget the clock -- or, far
+                     * worse, an afternoon of somebody's progress. */
                     ymir_bridge_save_smpc_state(ymir, smpc_path.c_str());
+                    save_bram();
                     running_view = false;
                     show_pause = false;
                 }
                 ImGui::End();
+            }
+        }
+
+        /*
+         * A crosshair, because a gun you cannot see is a gun you cannot aim.
+         *
+         * Drawn by us rather than left to the system cursor: the cursor is
+         * hidden over the picture so it does not sit a few pixels away from
+         * where the Saturn thinks the shot went, and an arrow is the wrong
+         * shape for aiming anyway.
+         */
+        if (running_view && !show_pause && pointer.seen &&
+            (cfg.machine.port1 == saturn::Peripheral::VirtuaGun ||
+             cfg.machine.port2 == saturn::Peripheral::VirtuaGun)) {
+            ImDrawList *dl = ImGui::GetForegroundDrawList();
+            const ImVec2 c(pointer.x, pointer.y);
+            /* Sized off the window, not the font: a gun sight has to be found
+             * on a busy screen at a glance, and the first one was drawn at
+             * text size and disappeared into the scenery. */
+            const float a = (float)win_h * 0.028f *
+                            ((float)cfg.machine.crosshair / 100.0f);
+            const float t = std::max(2.0f, a * 0.09f);   /* line weight */
+            const ImU32 ink = pointer.trigger ? IM_COL32(255, 96, 64, 245)
+                                              : IM_COL32(120, 200, 255, 225);
+            /* A dark pass underneath, offset by nothing but drawn thicker, so
+             * the sight stays visible over a light wall as well as a dark
+             * one. Without it a blue crosshair vanishes against blue sky. */
+            const ImU32 shadow = IM_COL32(0, 0, 0, 150);
+            for (int pass = 0; pass < 2; ++pass) {
+                const ImU32 col = pass ? ink : shadow;
+                const float wgt = pass ? t : t + 2.0f;
+                dl->AddCircle(c, a * 0.55f, col, 32, wgt);
+                dl->AddLine(ImVec2(c.x - a, c.y), ImVec2(c.x - a * 0.28f, c.y), col, wgt);
+                dl->AddLine(ImVec2(c.x + a * 0.28f, c.y), ImVec2(c.x + a, c.y), col, wgt);
+                dl->AddLine(ImVec2(c.x, c.y - a), ImVec2(c.x, c.y - a * 0.28f), col, wgt);
+                dl->AddLine(ImVec2(c.x, c.y + a * 0.28f), ImVec2(c.x, c.y + a), col, wgt);
+            }
+            dl->AddCircleFilled(c, std::max(1.5f, a * 0.06f), ink, 12);
+        }
+
+        /* The system cursor gets out of the way for the pointing devices, and
+         * comes back for everything else -- including the menu, which you
+         * still have to be able to click. */
+        {
+            const bool aiming = running_view && !show_pause &&
+                (cfg.machine.port1 == saturn::Peripheral::VirtuaGun ||
+                 cfg.machine.port2 == saturn::Peripheral::VirtuaGun ||
+                 cfg.machine.port1 == saturn::Peripheral::ShuttleMouse ||
+                 cfg.machine.port2 == saturn::Peripheral::ShuttleMouse);
+            static bool hidden = false;
+            if (aiming != hidden) {
+                hidden = aiming;
+                if (aiming) SDL_HideCursor(); else SDL_ShowCursor();
+            }
+        }
+
+        /* One place decides whether the Saturn is running, and it is the only
+         * caller of the pause. Scattering set_presentation_paused around the
+         * places that change the view is how you end up with a machine still
+         * playing music behind a menu. */
+        {
+            const bool want = running_view && !show_pause;
+            if (want != machine_running) {
+                machine_running = want;
+                ymir_bridge_set_presentation_paused(ymir, want ? 0 : 1);
             }
         }
 
@@ -1502,38 +2011,12 @@ int main(int argc, char **argv)
              * nearest is used where it is exactly right -- an integer scale --
              * and bilinear everywhere else.
              */
-            const saturn::Settings &vs = cfg.machine;
-            float w = (float)win_w, h = (float)win_h;
-            if (vs.aspect == 0) {
-                const float target = 4.0f / 3.0f;
-                h = w / target;
-                if (h > (float)win_h) { h = (float)win_h; w = h * target; }
-            }
-
-            if (vs.integer_scale && frame_w > 0 && frame_h > 0) {
-                /* The largest whole multiple that still fits. Every pixel the
-                 * same size, and a border rather than a compromise. */
-                int k = (int)std::min(w / (float)frame_w, h / (float)frame_h);
-                if (k < 1) k = 1;
-                w = (float)(frame_w * k);
-                h = (float)(frame_h * k);
-            }
-
-            bool linear;
-            switch (vs.scaling) {
-            case 1:  linear = false; break;
-            case 2:  linear = true;  break;
-            default:
-                /* Auto: hard pixels only when the scale divides evenly. */
-                linear = frame_w <= 0 || frame_h <= 0 ||
-                         (int)w % frame_w != 0 || (int)h % frame_h != 0;
-                break;
-            }
-            SDL_SetTextureScaleMode(frame, linear ? SDL_SCALEMODE_LINEAR
-                                                  : SDL_SCALEMODE_NEAREST);
-
-            const SDL_FRect dst = { ((float)win_w - w) * 0.5f,
-                                    ((float)win_h - h) * 0.5f, w, h };
+            const PictureRect r = picture_rect(win_w, win_h, frame_w, frame_h,
+                                               cfg.machine);
+            SDL_SetTextureScaleMode(frame,
+                picture_linear(r, frame_w, frame_h, cfg.machine)
+                    ? SDL_SCALEMODE_LINEAR : SDL_SCALEMODE_NEAREST);
+            const SDL_FRect dst = { r.x, r.y, r.w, r.h };
             SDL_RenderTexture(ren, frame, nullptr, &dst);
         }
 
@@ -1541,11 +2024,16 @@ int main(int argc, char **argv)
         SDL_RenderPresent(ren);
     }
 
+    save_bram();
+    ymir_bridge_save_smpc_state(ymir, smpc_path.c_str());
     saturn::save_app_config(cfg_path, cfg);
     /* The clock and the language, so the BIOS does not ask again. */
     ymir_bridge_save_smpc_state(ymir, smpc_path.c_str());
     if (frame) SDL_DestroyTexture(frame);
     if (logo) SDL_DestroyTexture(logo);
+    if (art_console) SDL_DestroyTexture(art_console);
+    if (art_pad) SDL_DestroyTexture(art_pad);
+    if (art_gun) SDL_DestroyTexture(art_gun);
     for (SDL_Gamepad *g : pads) if (g) SDL_CloseGamepad(g);
     ymir_bridge_destroy(ymir);
     ImGui_ImplSDLRenderer3_Shutdown();

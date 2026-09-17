@@ -59,6 +59,50 @@ def wordmark(height=200):
 
 ANDROID = {"mdpi": 48, "hdpi": 72, "xhdpi": 96, "xxhdpi": 144, "xxxhdpi": 192}
 
+# The hardware shots. Masters live in store/art/ and are cut down here; the
+# originals are ~1.8MB each and there is no reason to ship that to draw a
+# thumbnail with.
+HARDWARE = {
+    "console.png":     640,   # the drive panel: this is the machine itself
+    "control-pad.png": 320,   # the ports strip, one per socket
+    "virtua-gun.png":  320,
+}
+
+PANEL_BG = (14, 16, 23)       # matches SDL_SetRenderDrawColor in saturn_app.cpp
+
+
+def on_panel(img):
+    """Lift the backdrop to the panel colour so the tile has no visible edge.
+
+    These are product shots on a black vignette. Dropped straight onto the
+    interface they read as photographs pasted on, with a hard rectangle where
+    the black meets the panel. Taking a component-wise maximum against the
+    panel colour only touches pixels darker than the panel -- which is the
+    vignette and nothing else, since the hardware's own shadows are lit -- so
+    the corners dissolve into the page and the product is untouched.
+    """
+    px = img.load()
+    w, h = img.size
+    for y in range(h):
+        for x in range(w):
+            r, g, b = px[x, y][:3]
+            px[x, y] = (max(r, PANEL_BG[0]), max(g, PANEL_BG[1]), max(b, PANEL_BG[2]))
+    return img
+
+
+def hardware(art):
+    for name, width in HARDWARE.items():
+        src = os.path.join(HERE, "store", "art", name)
+        if not os.path.exists(src):
+            print("hardware: no %s, skipped" % name)
+            continue
+        im = Image.open(src).convert("RGB")
+        im = im.crop(content_box(im, threshold=150, pad=24))
+        h = round(im.height * width / im.width)
+        im = on_panel(im.resize((width, h), Image.LANCZOS))
+        im.save(os.path.join(art, name))
+        print("hardware: %s %dx%d" % (name, width, h))
+
 
 def main():
     if not os.path.exists(SOURCE):
@@ -70,6 +114,8 @@ def main():
     mark = wordmark()
     mark.save(os.path.join(art, "wordmark.png"))
     print("wordmark: %dx%d  (from the shipped feature graphic)" % mark.size)
+
+    hardware(art)
 
     # The launcher icon is already right and already in the tree; it is copied
     # rather than regenerated, so there is one master and not two.
