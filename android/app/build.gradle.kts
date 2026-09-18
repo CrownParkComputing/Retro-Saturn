@@ -80,8 +80,8 @@ android {
         targetSdk = 36
         // Production carries 3 (0.2.1) and Play never accepts a code at or
         // below what is already there.
-        versionCode = 4
-        versionName = "2.0"
+        versionCode = 5
+        versionName = "2.1"
         ndk {
             // Only the ABI the core has actually been built for. Listing more
             // ships an APK that installs and then fails to load a library,
