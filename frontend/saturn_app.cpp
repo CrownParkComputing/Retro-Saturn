@@ -30,6 +30,7 @@
 #include "saturn_media.h"
 #include "saturn_saf.h"
 #include "saturn_setup.h"
+#include "touch_pad.h"
 
 /* Stamped in by the build script; sensible if it was not. */
 #ifndef SATURN_CORE_VERSION
@@ -489,7 +490,8 @@ const Sint16 kTriggerOn = 16384;
  * One bit per source, and the Saturn sees the button as pressed while any bit
  * is set.
  */
-enum { kSrcButton = 1 << 0, kSrcTrigger = 1 << 1, kSrcStick = 1 << 2 };
+enum { kSrcButton = 1 << 0, kSrcTrigger = 1 << 1, kSrcStick = 1 << 2,
+       kSrcTouch = 1 << 3 };
 uint8_t g_held[2][YMIR_BUTTON_COUNT] = {};
 
 void pad_press(YmirInstance *ymir, int port, YmirButton button,
@@ -589,6 +591,9 @@ int main(int argc, char **argv)
      * same number of pixels is a comfortable size on a 1080p monitor and a
      * smear on a 400ppi phone.
      */
+    /* Remembered past the style block: the on-screen pad shows itself by
+     * default only where there is glass to touch. */
+    bool has_touch = false;
     {
         float scale = SDL_GetWindowDisplayScale(win);
         if (scale <= 0.0f) scale = 1.0f;
@@ -635,6 +640,7 @@ int main(int argc, char **argv)
         SDL_free(SDL_GetTouchDevices(&n_touch));
         touch = n_touch > 0;
 #endif
+        has_touch = touch;
         if (touch) {
             ImGuiStyle &st = ImGui::GetStyle();
             st.FramePadding  = ImVec2(14.0f, 12.0f);
@@ -1264,6 +1270,67 @@ int main(int argc, char **argv)
     bool show_pause = false;
 
     /*
+     * The on-screen pad: retro_touch_pad's overlay over port 1.
+     *
+     * Its ids are the profile's, not the Saturn's, so one table turns them
+     * into buttons. The three pads share ids where they mean the same thing
+     * (a, b, x, y, start) and differ where they do not: the joystick's fire
+     * 1 is A and fire 2 is B, the two buttons most games put jump and shoot
+     * on; the 360 pad's bumpers are L and R and its triggers take the two
+     * face buttons the 360 has not got -- LT is Z, RT is C. Back opens the
+     * pause menu, as on a real pad. Directions come already merged.
+     */
+    touchpad::Overlay pad;
+    bool pad_editing = false;            /* arranging, in a game */
+    ImVec2 pad_preview_pos(0, 0), pad_preview_size(0, 0);   /* the settings page's box */
+    auto touch_button = [](const std::string &id) -> int {
+        static const struct { const char *id; YmirButton b; } map[] = {
+            { "fire1", YMIR_BUTTON_A }, { "fire2", YMIR_BUTTON_B },
+            { "a", YMIR_BUTTON_A }, { "b", YMIR_BUTTON_B }, { "c", YMIR_BUTTON_C },
+            { "x", YMIR_BUTTON_X }, { "y", YMIR_BUTTON_Y }, { "z", YMIR_BUTTON_Z },
+            { "l", YMIR_BUTTON_L }, { "r", YMIR_BUTTON_R },
+            { "lb", YMIR_BUTTON_L }, { "rb", YMIR_BUTTON_R },
+            { "lt", YMIR_BUTTON_Z }, { "rt", YMIR_BUTTON_C },
+            { "start", YMIR_BUTTON_START },
+        };
+        for (const auto &m : map) if (id == m.id) return (int)m.b;
+        return -1;
+    };
+    touchpad::Sink pad_sink;
+    pad_sink.directions = [&](bool u, bool d, bool l, bool r) {
+        pad_press(ymir, 1, YMIR_BUTTON_UP, kSrcTouch, u);
+        pad_press(ymir, 1, YMIR_BUTTON_DOWN, kSrcTouch, d);
+        pad_press(ymir, 1, YMIR_BUTTON_LEFT, kSrcTouch, l);
+        pad_press(ymir, 1, YMIR_BUTTON_RIGHT, kSrcTouch, r);
+    };
+    pad_sink.action = [&](const std::string &id, bool down) {
+        /* Back opens the menu, as it does on a real pad: a handheld has no
+         * Escape key and a thumb on glass should not need one. */
+        if (id == "back") { if (down) show_pause = true; return; }
+        const int b = touch_button(id);
+        if (b >= 0) pad_press(ymir, 1, (YmirButton)b, kSrcTouch, down);
+    };
+    /* The settings page's preview presses nothing. */
+    touchpad::Sink pad_silent;
+    pad_silent.directions = [](bool, bool, bool, bool) {};
+    pad_silent.action = [](const std::string &, bool) {};
+    auto load_pad = [&] {
+        const touchpad::Profile *pp = touchpad::profile_by_id(cfg.machine.touch_pad);
+        if (!pp) pp = &touchpad::profile_xbox360();
+        pad.set(pp, touchpad::Layout::load(cfg_dir, *pp));
+    };
+    load_pad();
+    /* Shown when asked, or by default where there is a touchscreen -- and
+     * never over a gun or a mouse game, which have no use for it and whose
+     * pointer would fight it for every finger. */
+    auto pad_on = [&] {
+        if (cfg.machine.touch_pad_show == 2) return false;
+        if (cfg.machine.touch_pad_show == 0 && !has_touch) return false;
+        return cfg.machine.port1 != saturn::Peripheral::VirtuaGun &&
+               cfg.machine.port1 != saturn::Peripheral::ShuttleMouse;
+    };
+
+    /*
      * The machine only runs while you are looking at it.
      *
      * It used to keep running behind the shelf, which you could hear: a game
@@ -1386,10 +1453,27 @@ int main(int argc, char **argv)
         int win_w = 0, win_h = 0;
         SDL_GetWindowSize(win, &win_w, &win_h);
 
+        const bool pad_active = running_view && !show_pause && pad_on();
+        const bool pad_previewing = !running_view && face == Face::Input &&
+                                    pad_preview_size.x > 0;
+        if (!running_view) pad_editing = false;
+        pad.set_editing(pad_editing || pad_previewing);
+        const ImVec2 win_sz((float)win_w, (float)win_h);
+
         SDL_Event ev;
         while (SDL_PollEvent(&ev)) {
             ImGui_ImplSDL3_ProcessEvent(&ev);
             if (ev.type == SDL_EVENT_QUIT) quit = true;
+
+            /* ---- the on-screen pad, before the gun and the mouse ----
+             * A finger on a drawn button is a button, not a shot; anything
+             * the pad does not claim falls through to the pointer path. */
+            if (pad_active) {
+                if (pad.handle(ev, win_sz, ImVec2(0, 0), win_sz, pad_sink)) continue;
+            } else if (pad_previewing) {
+                if (pad.handle(ev, win_sz, pad_preview_pos, pad_preview_size, pad_silent))
+                    continue;
+            }
 
             /*
              * Super+Q closes, Super+M resizes.
@@ -2106,6 +2190,7 @@ int main(int argc, char **argv)
                     { "MACHINE",     "MACHINE",Face::Memory,    true  },
                     { "Memory",      "Memory", Face::Memory,    false },
                     { "Picture",     "Picture",Face::Picture,   false },
+                    { "Touch pad",   "Pad",    Face::Input,     false },
                     { "Sound",       "Sound",  Face::Sound,     false },
                     { "Processor",   "CPU",    Face::Processor, false },
                     { "Disc drive",  "Drive",  Face::Drive,     false },
@@ -2653,6 +2738,7 @@ int main(int argc, char **argv)
                 flow("Downloads", Face::Downloads);
                 flow("Saves", Face::Saves);
                 flow("Picture", Face::Picture);
+                flow("Touch pad", Face::Input);
                 flow("Sound", Face::Sound);
                 flow("Processor", Face::Processor);
                 flow("Disc drive", Face::Drive);
@@ -3274,7 +3360,8 @@ int main(int argc, char **argv)
 
             else if (face == Face::Setup || face == Face::Paths ||
                      face == Face::Picture || face == Face::Sound ||
-                     face == Face::Processor || face == Face::Drive) {
+                     face == Face::Processor || face == Face::Drive ||
+                     face == Face::Input) {
                 /*
                  * The settings pages, one per rail entry.
                  *
@@ -3545,6 +3632,81 @@ int main(int argc, char **argv)
                     }
 
 
+                    if (face == Face::Input) {
+                        /*
+                         * The on-screen pad.
+                         *
+                         * Which pad, when it shows, and a box the shape of a
+                         * game in which to arrange it -- here rather than
+                         * over a running game, because arranging controls
+                         * while the game is playing underneath you costs a
+                         * life per fiddle. The Arrange button on the pause
+                         * menu is there for the small adjustment.
+                         */
+                        pad_preview_size = ImVec2(0, 0);
+                        ImGui::Spacing();
+                        TextDimWrapped("Drawn over the game on a touchscreen. The 360 "
+                                       "pad reaches every Saturn button -- LT is Z, RT "
+                                       "is C. The joystick is two buttons and the least "
+                                       "screen covered. The Saturn pad is the real one. "
+                                       "Each keeps its own arrangement.");
+                        ImGui::Spacing();
+                        ImGui::TextUnformatted("Pad");
+                        ImGui::SameLine();
+                        {
+                            const touchpad::Profile *choices[] = {
+                                &touchpad::profile_xbox360(), &touchpad::profile_generic(),
+                                &touchpad::profile_saturn() };
+                            for (const touchpad::Profile *pp : choices) {
+                                if (ImGui::RadioButton(pp->name.c_str(),
+                                                       cfg.machine.touch_pad == pp->id) &&
+                                    cfg.machine.touch_pad != pp->id) {
+                                    cfg.machine.touch_pad = pp->id;
+                                    dirty = true;
+                                    load_pad();
+                                }
+                                ImGui::SameLine();
+                            }
+                            ImGui::NewLine();
+                        }
+                        ImGui::TextUnformatted("Show it");
+                        ImGui::SameLine();
+                        dirty |= ImGui::RadioButton("On a touchscreen", &s.touch_pad_show, 0);
+                        ImGui::SameLine();
+                        dirty |= ImGui::RadioButton("Always", &s.touch_pad_show, 1);
+                        ImGui::SameLine();
+                        dirty |= ImGui::RadioButton("Never", &s.touch_pad_show, 2);
+                        ImGui::Spacing();
+                        if (pad.designer_controls(nullptr)) pad.layout().save(cfg_dir);
+                        ImGui::Spacing();
+                        TextDim("Drag a control to move it. Tap one to resize or hide it.");
+                        /* The box: as wide as the page, 16:9, the shape a
+                         * game gets, so a control in the corner here is in
+                         * the corner there. */
+                        {
+                            const ImVec2 avail = ImGui::GetContentRegionAvail();
+                            float bw_ = std::max(200.0f, avail.x);
+                            float bh_ = bw_ * 9.0f / 16.0f;
+                            const float room = std::max(160.0f, avail.y - ImGui::GetFontSize());
+                            if (bh_ > room) { bh_ = room; bw_ = bh_ * 16.0f / 9.0f; }
+                            const ImVec2 pos = ImGui::GetCursorScreenPos();
+                            ImDrawList *dl = ImGui::GetWindowDrawList();
+                            dl->AddRectFilled(pos, ImVec2(pos.x + bw_, pos.y + bh_),
+                                              IM_COL32(16, 16, 20, 255), 8.0f);
+                            dl->AddRect(pos, ImVec2(pos.x + bw_, pos.y + bh_),
+                                        IM_COL32(255, 255, 255, 60), 8.0f);
+                            const char *hint = "the game goes here";
+                            const ImVec2 ts = ImGui::CalcTextSize(hint);
+                            dl->AddText(ImVec2(pos.x + (bw_ - ts.x) * 0.5f,
+                                               pos.y + (bh_ - ts.y) * 0.5f),
+                                        IM_COL32(255, 255, 255, 30), hint);
+                            ImGui::InvisibleButton("##padpreview", ImVec2(bw_, bh_));
+                            pad_preview_pos = pos;
+                            pad_preview_size = ImVec2(bw_, bh_);
+                            pad.draw(dl, pos, pad_preview_size);
+                        }
+                    }
+
                     if (face == Face::Processor) {
                         ImGui::Spacing();
                         dirty |= ImGui::Checkbox("Work out the region from the disc",
@@ -3790,6 +3952,22 @@ int main(int argc, char **argv)
                     ymir_bridge_reset(ymir, 1);
                     show_pause = false;
                 }
+                /* The touch pad, where it can be used. Which pad and how it
+                 * is laid out are on the Touch pad page; this is only show,
+                 * hide, and move things while the game is up. */
+                if (cfg.machine.port1 != saturn::Peripheral::VirtuaGun &&
+                    cfg.machine.port1 != saturn::Peripheral::ShuttleMouse) {
+                    ImGui::Separator();
+                    const bool on = pad_on();
+                    if (ImGui::Button(on ? "Hide the touch pad" : "Show the touch pad", bw)) {
+                        cfg.machine.touch_pad_show = on ? 2 : 1;
+                        saturn::save_app_config(cfg_path, cfg);
+                    }
+                    if (on && ImGui::Button("Arrange the touch pad", bw)) {
+                        pad_editing = true;
+                        show_pause = false;
+                    }
+                }
                 if (loaded_game_index >= 0 && games[loaded_game_index].multi()) {
                     ImGui::Separator();
                     TextDim("Swap disc");
@@ -3900,6 +4078,30 @@ int main(int argc, char **argv)
             dl->AddCircleFilled(c, std::max(1.5f, a * 0.06f), ink, 12);
         }
 
+        /* ---- the on-screen pad, over the picture ---- */
+        if (pad_active) {
+            pad.draw(ImGui::GetForegroundDrawList(), ImVec2(0, 0), win_sz);
+            if (pad_editing) {
+                /* The designer's controls, in a strip at the top while the
+                 * game waits underneath. Done goes back to playing. */
+                ImGui::SetNextWindowPos(ImVec2(win_w * 0.5f, 8.0f), ImGuiCond_Always,
+                                        ImVec2(0.5f, 0.0f));
+                ImGui::Begin("Arrange the pad", nullptr,
+                             ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
+                             ImGuiWindowFlags_AlwaysAutoResize |
+                             ImGuiWindowFlags_NoCollapse);
+                TextDim("Drag a control to move it. Tap one to resize or hide it.");
+                if (pad.designer_controls(&pad_sink)) pad.layout().save(cfg_dir);
+                ImGui::Separator();
+                if (ImGui::Button("Done", ImVec2(ImGui::GetFontSize() * 8.0f, 0))) {
+                    pad_editing = false;
+                    pad.layout().save(cfg_dir);
+                }
+                ImGui::End();
+            }
+        }
+        if (pad.take_dirty()) pad.layout().save(cfg_dir);
+
         /* The system cursor gets out of the way for the pointing devices, and
          * comes back for everything else -- including the menu, which you
          * still have to be able to click. */
@@ -3992,6 +4194,9 @@ int main(int argc, char **argv)
             if (want != machine_running) {
                 machine_running = want;
                 ymir_bridge_set_presentation_paused(ymir, want ? 0 : 1);
+                /* A finger that was down when the menu opened must not stay
+                 * down in the Saturn behind it. */
+                if (!want) pad.release_all(pad_sink);
             }
         }
 

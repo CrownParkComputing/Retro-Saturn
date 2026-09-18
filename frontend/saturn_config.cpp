@@ -131,6 +131,11 @@ bool load_app_config(const std::string &path, AppConfig &out)
     if (s.crosshair < 50 || s.crosshair > 600) s.crosshair = 250;
     s.port1                = peripheral_of(kv, "port1", s.port1);
     s.port2                = peripheral_of(kv, "port2", s.port2);
+    s.touch_pad            = str_of(kv, "touch_pad", s.touch_pad);
+    if (s.touch_pad != "xbox360" && s.touch_pad != "generic" && s.touch_pad != "saturn")
+        s.touch_pad = "xbox360";
+    s.touch_pad_show       = int_of(kv, "touch_pad_show", s.touch_pad_show);
+    if (s.touch_pad_show < 0 || s.touch_pad_show > 2) s.touch_pad_show = 0;
     return true;
 }
 
@@ -162,6 +167,8 @@ bool save_app_config(const std::string &path, const AppConfig &cfg)
     t += "crosshair=" + std::to_string(s.crosshair) + "\n";
     t += "port1=" + std::to_string((int)s.port1) + "\n";
     t += "port2=" + std::to_string((int)s.port2) + "\n";
+    t += "touch_pad=" + s.touch_pad + "\n";
+    t += "touch_pad_show=" + std::to_string(s.touch_pad_show) + "\n";
     return write_file(path, t);
 }
 

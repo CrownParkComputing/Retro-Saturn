@@ -132,6 +132,17 @@ struct Settings {
     Peripheral port1 = Peripheral::ControlPad;
     Peripheral port2 = Peripheral::None;
 
+    /* ---- the on-screen pad ----
+     *
+     * Which one is drawn over a game, by retro_touch_pad profile id. The 360
+     * pad is the default: it is the layout most thumbs know, and with the
+     * triggers standing in for Z and C it reaches every Saturn button. Its
+     * arrangement lives in its own file beside the config, not here.
+     */
+    std::string touch_pad = "xbox360";
+    /* 0 = when there is a touchscreen, 1 = always, 2 = never. */
+    int touch_pad_show = 0;
+
     bool operator==(const Settings &o) const {
         return region_auto == o.region_auto &&
                video_standard == o.video_standard && sh2_cache == o.sh2_cache &&
@@ -143,7 +154,8 @@ struct Settings {
                cd_read_speed == o.cd_read_speed && cdblock_lle == o.cdblock_lle && rtc_mode == o.rtc_mode && scaling == o.scaling &&
                integer_scale == o.integer_scale && aspect == o.aspect &&
                crosshair == o.crosshair && art_kind == o.art_kind &&
-               port1 == o.port1 && port2 == o.port2;
+               port1 == o.port1 && port2 == o.port2 &&
+               touch_pad == o.touch_pad && touch_pad_show == o.touch_pad_show;
     }
 };
 
