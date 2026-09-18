@@ -209,7 +209,10 @@ std::string num(double d)
 }
 
 const float kMinPos = 0.04f, kMaxPos = 0.96f;
-const float kMinScale = 0.6f, kMaxScale = 1.6f;
+/* 0.5..3.0x: was 0.6..1.6 until 2026-09-18 — 1.6x left the buttons noticeably
+ * cramped on a 1920x1080 Retroid screen; the wider ceiling lets one drag cover
+ * the "make it all bigger" case without per-cluster fiddling. */
+const float kMinScale = 0.5f, kMaxScale = 3.0f;
 float clampf(float v, float lo, float hi) { return std::max(lo, std::min(hi, v)); }
 
 } /* namespace */
@@ -221,7 +224,8 @@ float clampf(float v, float lo, float hi) { return std::max(lo, std::min(hi, v))
 Layout Layout::defaults(const Profile &p)
 {
     Layout l; l.profile = p.id; l.stick = p.default_stick;
-    for (const Cluster &c : p.clusters) l.clusters[c.id] = Placed{ c.dx, c.dy, 1.0f, true };
+    for (const Cluster &c : p.clusters)
+        l.clusters[c.id] = Placed{ c.dx, c.dy, 1.0f, 1.0f, true };
     return l;
 }
 
@@ -254,6 +258,12 @@ Layout Layout::decode(const std::string &json, const Profile &p)
             point(c->get("pos"), kv.second.dx, kv.second.dy);
             if (const J *s = c->get("scale"))
                 kv.second.scale = clampf((float)s->num(1.0), kMinScale, kMaxScale);
+            /* Per-cluster spacing was the Layout-level field until
+             * 2026-09-18; older JSONs still write it at the top level,
+             * which we ignore here (the per-cluster default 1.0 wins). */
+            (void)c->get("spacing");
+            if (const J *sp = c->get("spacing"))
+                kv.second.spacing = clampf((float)sp->num(1.0), 0.5f, 2.5f);
             if (const J *v = c->get("visible")) kv.second.visible = v->boolean(true);
         }
     }
@@ -272,6 +282,8 @@ Layout Layout::decode(const std::string &json, const Profile &p)
             x.dx = 0.5f; x.dy = 0.5f;
             if (!point(e.get("pos"), x.dx, x.dy)) continue;
             if (const J *s = e.get("scale")) x.scale = clampf((float)s->num(1.0), kMinScale, kMaxScale);
+            x.spacing = 1.0f;
+            if (const J *sp = e.get("spacing")) x.spacing = clampf((float)sp->num(1.0), 0.5f, 2.5f);
             bool dup = false;
             for (const Extra &o : l.extras) if (o.id == x.id) dup = true;
             if (!dup) l.extras.push_back(x);
@@ -291,6 +303,7 @@ std::string Layout::encode() const
         first = false;
         o += quote(kv.first) + ":{\"pos\":[" + num(kv.second.dx) + "," + num(kv.second.dy) +
              "],\"scale\":" + num(kv.second.scale) +
+             ",\"spacing\":" + num(kv.second.spacing) +
              ",\"visible\":" + (kv.second.visible ? "true" : "false") + "}";
     }
     o += "},\"extras\":[";
@@ -408,6 +421,11 @@ void Overlay::rebuild_hits(const ImVec2 &pos, const ImVec2 &size)
     auto centre_of = [&](float dx, float dy) {
         return ImVec2(pos.x + dx * size.x, pos.y + dy * size.y);
     };
+    /* Push each cluster outward from the play-area centre by `spacing`.
+     * 1.0 keeps the profile's chosen positions; >1 spreads (useful when a
+     * cluster has been scaled up past its slot), <1 brings everything
+     * towards the middle. The extras use the same math so an added
+     * button follows the global spread. */
     auto add_circle = [&](const char *kind, const std::string &id, ImVec2 c, float r) {
         hits_.push_back(Hit{ kind, id, c, r, ImVec2(0, 0) });
     };
@@ -426,7 +444,13 @@ void Overlay::rebuild_hits(const ImVec2 &pos, const ImVec2 &size)
             add_circle("stick", c.id, cc, c.stick_size * sc * 0.5f);
             continue;
         }
-        const float gap = 10.0f * sc;
+        /* Per-cluster spacing multiplies the gap between buttons INSIDE
+         * this cluster. 1.0 is the default; >1 spreads them, <1
+         * packs them. Combined with the cluster's own scale (sc),
+         * this lets the user push buttons apart without disturbing
+         * the cluster's position in the play area. */
+        const float sp = p.spacing;
+        const float gap = 10.0f * sc * sp;
         switch (c.shape) {
         case Shape::Column: {
             float total = 0;
@@ -465,7 +489,7 @@ void Overlay::rebuild_hits(const ImVec2 &pos, const ImVec2 &size)
         case Shape::Diamond: {
             float d = 0;
             for (const Button &b : c.buttons) d = std::max(d, b.size * sc);
-            const float side = d * 2.7f;
+            const float side = d * 2.7f * sp;
             const ImVec2 at[4] = { ImVec2(cc.x, cc.y - side * 0.5f + d * 0.5f),
                                    ImVec2(cc.x - side * 0.5f + d * 0.5f, cc.y),
                                    ImVec2(cc.x + side * 0.5f - d * 0.5f, cc.y),
@@ -918,33 +942,17 @@ bool Overlay::designer_controls(const Sink *sink_for_release)
         lay_.opacity = op / 100.0f; changed = true;
     }
 
-    ImGui::Spacing();
-    if (selected_.empty()) {
-        ImGui::TextDisabled("Tap a control to resize or hide it. Drag to move.");
-    } else {
-        float *scale = nullptr; bool *visible = nullptr; std::string title;
-        if (selected_.rfind("extra:", 0) == 0) {
-            for (Extra &e : lay_.extras)
-                if ("extra:" + e.id == selected_) { scale = &e.scale; title = e.label; }
-        } else if (auto it = lay_.clusters.find(selected_); it != lay_.clusters.end()) {
-            scale = &it->second.scale; visible = &it->second.visible;
-            if (const Cluster *c = prof_->cluster(selected_)) title = c->label;
-        }
-        if (scale) {
-            ImGui::Text("%s", title.c_str());
-            ImGui::SetNextItemWidth(ImGui::GetFontSize() * 9.0f);
-            if (ImGui::SliderFloat("Size", scale, kMinScale, kMaxScale, "%.1fx")) changed = true;
-            if (visible) {
-                ImGui::SameLine();
-                if (ImGui::Checkbox("Shown", visible)) changed = true;
-            }
-        } else {
-            selected_.clear();
-        }
-    }
+    /* Spacing used to be a global Layout-level field; 2026-09-18 moved
+     * it to per-cluster Placed::spacing so the slider sits with the
+     * rest of the cluster panel (cluster_panel()). Nothing left to
+     * draw here. */
 
     /* Add a button: a direction (where the stick is a joystick) or a second
-     * copy of any of the pad's own buttons, placed independently. */
+     * copy of any of the pad's own buttons, placed independently. The act
+     * of adding sets selected_ to the new extra, which is why this lives
+     * here rather than under the cluster panel -- a freshly-added button
+     * should bring the popup up automatically, which the host sees because
+     * selected_ went non-empty. */
     ImGui::Spacing();
     if (ImGui::BeginCombo("##addbtn", "Add a button...")) {
         auto have = [&](const std::string &id) {
@@ -978,21 +986,69 @@ bool Overlay::designer_controls(const Sink *sink_for_release)
             }
         ImGui::EndCombo();
     }
-    if (selected_.rfind("extra:", 0) == 0) {
-        ImGui::SameLine();
-        if (ImGui::Button("Remove")) {
-            const std::string gone = selected_.substr(6);
-            lay_.extras.erase(std::remove_if(lay_.extras.begin(), lay_.extras.end(),
-                [&](const Extra &x) { return x.id == gone; }), lay_.extras.end());
-            selected_.clear();
-            changed = true;
-        }
-    }
     ImGui::SameLine();
     if (ImGui::Button("Reset layout")) {
         lay_ = Layout::defaults(*prof_);
         selected_.clear();
         changed = true;
+    }
+    if (changed) hits_.clear();
+    return changed;
+}
+
+/* Cluster-specific panel: Size, Shown, Remove. The host opens a popup
+ * while something is selected; this method draws the body. Returns true
+ * when the layout changed and wants saving. */
+bool Overlay::cluster_panel()
+{
+    if (!prof_ || selected_.empty()) return false;
+    bool changed = false;
+    float *scale = nullptr; bool *visible = nullptr; float *spacing = nullptr;
+    std::string title;
+    if (selected_.rfind("extra:", 0) == 0) {
+        for (Extra &e : lay_.extras)
+            if ("extra:" + e.id == selected_) {
+                scale = &e.scale; spacing = &e.spacing; title = e.label;
+            }
+    } else if (auto it = lay_.clusters.find(selected_); it != lay_.clusters.end()) {
+        scale = &it->second.scale; visible = &it->second.visible;
+        spacing = &it->second.spacing;
+        if (const Cluster *c = prof_->cluster(selected_)) title = c->label;
+    }
+    if (!scale) { selected_.clear(); return false; }
+
+    ImGui::Text("%s", title.c_str());
+    ImGui::SetNextItemWidth(ImGui::GetFontSize() * 12.0f);
+    if (ImGui::SliderFloat("Size", scale, kMinScale, kMaxScale, "%.2fx")) changed = true;
+    if (visible) {
+        ImGui::SameLine();
+        if (ImGui::Checkbox("Shown", visible)) changed = true;
+    }
+    /* Spacing is per-cluster (Placed::spacing), not global. Lives here
+     * because adjusting it only makes sense in the context of the
+     * selected cluster -- the one you've picked out and are
+     * respacing. The slider in designer_controls() used to be global
+     * and was the wrong knob. */
+    ImGui::SetNextItemWidth(ImGui::GetFontSize() * 12.0f);
+    if (ImGui::SliderFloat("Spacing", spacing, 0.5f, 2.5f, "%.2fx")) changed = true;
+    if (selected_.rfind("extra:", 0) == 0) {
+        if (ImGui::Button("Remove")) {
+            const std::string gone = selected_.substr(6);
+            lay_.extras.erase(std::remove_if(lay_.extras.begin(), lay_.extras.end(),
+                [&](const Extra &x) { return x.id == gone; }), lay_.extras.end());
+            selected_.clear();
+            ImGui::CloseCurrentPopup();
+            changed = true;
+        }
+        ImGui::SameLine();
+    }
+    /* Done used to just clear selected_, which left the modal stuck
+     * open on the popup stack -- the user reported a grey button and no
+     * way out. CloseCurrentPopup() actually dismisses it; selected_
+     * also gets cleared so has_selection() goes false and we don't
+     * re-open next frame. ImGui's modal popups already bind Escape. */
+    if (ImGui::Button("Done")) {
+        selected_.clear(); ImGui::CloseCurrentPopup();
     }
     if (changed) hits_.clear();
     return changed;

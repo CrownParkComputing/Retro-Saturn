@@ -70,12 +70,29 @@ const Profile &profile_generic();     /* stick + two fire buttons */
 const Profile &profile_saturn();
 const Profile *profile_by_id(const std::string &id);
 
-struct Placed { float dx, dy; float scale = 1.0f; bool visible = true; };
+struct Placed {
+    float dx, dy;
+    float scale = 1.0f; /* size multiplier; user-tunable per cluster */
+    float spacing = 1.0f; /* gap between buttons INSIDE this cluster,
+                          * multiplied into the shape's inter-button
+                          * gap (Column / Row / Diamond side / Grid3x2).
+                          * 1.0 is the default; >1 spreads the buttons
+                          * apart (useful when a cluster has grown with
+                          * the size slider and its members are now
+                          * crowding one another), <1 packs them
+                          * closer. Per-cluster (added 2026-09-18)
+                          * because each cluster has its own shape and
+                          * its own member spacing concerns. */
+    bool visible = true;
+};
 
 struct Extra {
     std::string id, label;   /* "dir:up" for a direction, else a host action */
     float dx, dy;
     float scale = 1.0f;
+    float spacing = 1.0f; /* per-extra outward push, same idea as
+                          * Placed::spacing; kept on Extras so an added
+                          * button participates in the same model. */
     bool is_direction() const { return id.rfind("dir:", 0) == 0; }
 };
 
@@ -138,8 +155,27 @@ public:
 
     /* The designer's side panel: stick/d-pad, opacity, the selected control's
      * size and visibility, add/remove extra buttons. Returns true when the
-     * layout changed and wants saving. */
+     * layout changed and wants saving.
+     *
+     * Split 2026-09-18 (mirrors Retro-PSX-SDL3): general pad controls
+     * (Movement / Opacity / Add a button / Reset layout) stay inline as
+     * designer_controls(); cluster-specific controls (Size / Shown /
+     * Remove) moved to cluster_panel() so the host can show them in a
+     * modal popup instead of stacking them under a preview the user just
+     * clicked in. */
     bool designer_controls(const Sink *sink_for_release = nullptr);
+
+    /* The selected-cluster panel: Size slider, Shown checkbox, Remove.
+     * Only meaningful when something is selected -- the caller should open
+     * the popup only on that condition. Returns true when the layout
+     * changed and wants saving. */
+    bool cluster_panel();
+
+    /* Whether anything is currently selected (a cluster or an extra).
+     * Lets the host decide when to open the popup. */
+    bool has_selection() const { return !selected_.empty(); }
+    const std::string &selection_id() const { return selected_; }
+    void clear_selection() { selected_.clear(); }
 
     /* Let go of everything held: leaving the game, hiding the pad. */
     void release_all(const Sink &sink);
