@@ -3758,11 +3758,25 @@ int main(int argc, char **argv)
                             /* Cascade exit: when the modal closes and
                              * nothing is selected any more, drop the
                              * user back on the Edit tab too, not
-                             * stranded on a chrome-free preview. */
-                            if (g_pad_tab == 1 && !pad.has_selection() &&
-                                !ImGui::IsPopupOpen("##pad_designer")) {
-                                g_pad_tab = 0;
-                                g_pad_fullscreen = 0;
+                             * stranded on a chrome-free preview.
+                             *
+                             * Important: the gate uses the modal's
+                             * just-closed state, not "no popup right
+                             * now" -- tapping 'Arrange pad' starts
+                             * the preview with no selection and no
+                             * popup, which would otherwise pass the
+                             * naive check and flash the preview off
+                             * on the same frame the user opened it. */
+                            {
+                                static bool was_modal_open = false;
+                                const bool modal_open =
+                                    ImGui::IsPopupOpen("##pad_designer");
+                                if (g_pad_tab == 1 && !pad.has_selection() &&
+                                    was_modal_open && !modal_open) {
+                                    g_pad_tab = 0;
+                                    g_pad_fullscreen = 0;
+                                }
+                                was_modal_open = modal_open;
                             }
                         }
                     }
