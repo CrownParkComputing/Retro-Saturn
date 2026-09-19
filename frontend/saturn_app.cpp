@@ -277,6 +277,12 @@ const char *const kArtLabel[] = { "Title screen", "Box, front", "Box, back", "Ma
 const float kArtAspect[]      = { 0.78f, 1.42f, 1.42f, 0.5f };
 const int kArtKinds = 4;
 
+/* While the Pad page is on its Review tab, the rail collapses so the
+ * 16:9 preview takes the whole window. File-scope so the rail
+ * rendering and the SDL event loop can both read it. 2026-09-18. */
+static int g_pad_fullscreen = 0;
+static int g_pad_tab = 0;
+
 /*
  * The path to one kind of picture, derived from the one the catalogue hands
  * out for free.
@@ -1477,6 +1483,18 @@ int main(int argc, char **argv)
 
             /*
              * Super+Q closes, Super+M resizes.
+             /* Back / Escape exits the full-screen pad preview. Added
+             * 2026-09-18 because the preview has no chrome and the
+             * user needs a keyboard-style way out. */
+            if (ev.type == SDL_EVENT_KEY_DOWN && !running_view &&
+                face == Face::Input && g_pad_tab == 1 &&
+                (ev.key.scancode == SDL_SCANCODE_ESCAPE ||
+                 ev.key.scancode == SDL_SCANCODE_AC_BACK)) {
+                g_pad_tab = 0; g_pad_fullscreen = 0; continue;
+            }
+
+            /*
+             * Super+Q closes, Super+M resizes.
              *
              * Handled before anything else so they work from every screen,
              * including with a game running and the pause menu up -- a
@@ -2142,7 +2160,7 @@ int main(int argc, char **argv)
             const int n_tabs = downloads_offered ? 10 : 9;
 
             /* ============ the rail, where there is width for one ============ */
-            if (!narrow) {
+            if (!narrow && !g_pad_fullscreen) {
                 ImGui::BeginChild("##rail", ImVec2(rail_w, body_h), ImGuiChildFlags_None,
                                   ImGuiWindowFlags_NoScrollbar |
                                   ImGuiWindowFlags_NoScrollWithMouse);
@@ -3639,101 +3657,113 @@ int main(int argc, char **argv)
                          * Two tabs, restructured 2026-09-18 (mirrors the
                          * change in Retro-PSX-SDL3):
                          *   Edit   - the meta: which pad, when it shows.
-                         *            Nothing else; the designer panel was
-                         *            duplicated here and got in the way.
-                         *   Review - the pad itself, drawn into a 16:9 box
-                         *            the shape of a game. Tapping a cluster
-                         *            selects it and pops up a modal with
-                         *            the cluster-specific controls (Size,
-                         *            Shown, Remove); the general panel
-                         *            (Movement, Opacity, Add a button,
-                         *            Reset layout) sits underneath.
+                         *            Rail is visible. Nothing else.
+                         *   Review - the pad itself, drawn full-screen
+                         *            (rail collapses so the 16:9 preview
+                         *            takes the whole window). NO chrome.
+                         *            Tapping a cluster pops a modal;
+                         *            tapping the cluster's "Done" or
+                         *            pressing Escape cascades -- closes
+                         *            the modal AND exits the preview,
+                         *            returning to the Edit tab. The user
+                         *            is never stranded on a chrome-free
+                         *            preview with no visible way out.
                          */
                         pad_preview_size = ImVec2(0, 0);
-                        static int pad_tab = 0;  /* 0=Edit, 1=Review */
-                        if (ImGui::BeginTabBar("##pad_tabs")) {
-                            if (ImGui::BeginTabItem("Edit")) {
-                                pad_tab = 0;
-                                ImGui::Spacing();
-                                ImGui::TextUnformatted("Pad");
-                                ImGui::SameLine();
-                                {
-                                    const touchpad::Profile *choices[] = {
-                                        &touchpad::profile_xbox360(), &touchpad::profile_generic(),
-                                        &touchpad::profile_saturn() };
-                                    for (const touchpad::Profile *pp : choices) {
-                                        if (ImGui::RadioButton(pp->name.c_str(),
-                                                               cfg.machine.touch_pad == pp->id) &&
-                                            cfg.machine.touch_pad != pp->id) {
-                                            cfg.machine.touch_pad = pp->id;
-                                            dirty = true;
-                                            load_pad();
+                        if (g_pad_tab == 0) {
+                            g_pad_fullscreen = 0;
+                            if (ImGui::BeginTabBar("##pad_tabs")) {
+                                if (ImGui::BeginTabItem("Edit")) {
+                                    ImGui::Spacing();
+                                    ImGui::TextUnformatted("Pad");
+                                    ImGui::SameLine();
+                                    {
+                                        const touchpad::Profile *choices[] = {
+                                            &touchpad::profile_xbox360(), &touchpad::profile_generic(),
+                                            &touchpad::profile_saturn() };
+                                        for (const touchpad::Profile *pp : choices) {
+                                            if (ImGui::RadioButton(pp->name.c_str(),
+                                                                   cfg.machine.touch_pad == pp->id) &&
+                                                cfg.machine.touch_pad != pp->id) {
+                                                cfg.machine.touch_pad = pp->id;
+                                                dirty = true;
+                                                load_pad();
+                                            }
+                                            ImGui::SameLine();
                                         }
-                                        ImGui::SameLine();
+                                        ImGui::NewLine();
                                     }
-                                    ImGui::NewLine();
+                                    ImGui::TextUnformatted("Show it");
+                                    ImGui::SameLine();
+                                    dirty |= ImGui::RadioButton("On a touchscreen", &s.touch_pad_show, 0);
+                                    ImGui::SameLine();
+                                    dirty |= ImGui::RadioButton("Always", &s.touch_pad_show, 1);
+                                    ImGui::SameLine();
+                                    dirty |= ImGui::RadioButton("Never", &s.touch_pad_show, 2);
+                                    ImGui::Spacing();
+                                    if (ImGui::Button("Arrange pad (full screen)")) {
+                                        g_pad_tab = 1;
+                                        g_pad_fullscreen = 1;
+                                    }
+                                    ImGui::EndTabItem();
                                 }
-                                ImGui::TextUnformatted("Show it");
-                                ImGui::SameLine();
-                                dirty |= ImGui::RadioButton("On a touchscreen", &s.touch_pad_show, 0);
-                                ImGui::SameLine();
-                                dirty |= ImGui::RadioButton("Always", &s.touch_pad_show, 1);
-                                ImGui::SameLine();
-                                dirty |= ImGui::RadioButton("Never", &s.touch_pad_show, 2);
-                                ImGui::EndTabItem();
+                                ImGui::EndTabBar();
                             }
-                            if (ImGui::BeginTabItem("Review")) {
-                                pad_tab = 1;
-                                /* The box: as wide as the page, 16:9, the
-                                 * shape a game gets, so a control in the
-                                 * corner here is in the corner there. The
-                                 * preview takes the full vertical room now
-                                 * -- the cluster panel moved out to a
-                                 * modal, so designer_controls() underneath
-                                 * only carries the general pad settings
-                                 * (Movement, Opacity, Add a button, Reset). */
-                                const ImVec2 avail = ImGui::GetContentRegionAvail();
-                                float bw_ = std::max(200.0f, avail.x);
-                                float bh_ = bw_ * 9.0f / 16.0f;
-                                const float room = std::max(160.0f, avail.y - ImGui::GetFontSize());
-                                if (bh_ > room) { bh_ = room; bw_ = bh_ * 16.0f / 9.0f; }
-                                const ImVec2 pos = ImGui::GetCursorScreenPos();
-                                ImDrawList *dl = ImGui::GetWindowDrawList();
-                                dl->AddRectFilled(pos, ImVec2(pos.x + bw_, pos.y + bh_),
-                                                  IM_COL32(16, 16, 20, 255), 8.0f);
-                                dl->AddRect(pos, ImVec2(pos.x + bw_, pos.y + bh_),
-                                            IM_COL32(255, 255, 255, 60), 8.0f);
-                                const char *hint = "the game goes here";
-                                const ImVec2 ts = ImGui::CalcTextSize(hint);
-                                dl->AddText(ImVec2(pos.x + (bw_ - ts.x) * 0.5f,
-                                                   pos.y + (bh_ - ts.y) * 0.5f),
-                                            IM_COL32(255, 255, 255, 30), hint);
-                                ImGui::InvisibleButton("##padpreview", ImVec2(bw_, bh_));
-                                pad_preview_pos = pos;
-                                pad_preview_size = ImVec2(bw_, bh_);
-                                pad.draw(dl, pos, pad_preview_size);
-                                /* General pad panel: stick/d-pad, opacity,
-                                 * Add a button combo, Reset layout. */
-                                ImGui::Spacing();
+                        }
+                        if (g_pad_tab == 1) {
+                            g_pad_fullscreen = 1;
+                            /* Full-window preview with no chrome.
+                             * Modal opens on tap; Done/Escape both
+                             * cascade to also exit the preview (see
+                             * the check after the EndPopup below). */
+                            const ImVec2 win = ImGui::GetWindowSize();
+                            const float avail_w = win.x;
+                            const float avail_h = win.y;
+                            float bw_ = avail_w;
+                            float bh_ = bw_ * 9.0f / 16.0f;
+                            if (bh_ > avail_h) { bh_ = avail_h; bw_ = bh_ * 16.0f / 9.0f; }
+                            const float ox = (avail_w - bw_) * 0.5f;
+                            const float oy = (avail_h - bh_) * 0.5f;
+                            const ImVec2 pos(ox, oy);
+                            ImDrawList *dl = ImGui::GetWindowDrawList();
+                            dl->AddRectFilled(pos, ImVec2(pos.x + bw_, pos.y + bh_),
+                                              IM_COL32(16, 16, 20, 255), 8.0f);
+                            dl->AddRect(pos, ImVec2(pos.x + bw_, pos.y + bh_),
+                                        IM_COL32(255, 255, 255, 60), 8.0f);
+                            const ImVec2 pad_pos(ox, oy);
+                            const ImVec2 pad_size(bw_, bh_);
+                            ImGui::SetCursorScreenPos(pad_pos);
+                            ImGui::InvisibleButton("##padpreview", pad_size);
+                            pad_preview_pos = pad_pos;
+                            pad_preview_size = pad_size;
+                            pad.draw(dl, pad_pos, pad_preview_size);
+                            /* Modal: general panel + cluster panel
+                             * together. Cluster tap opens it. */
+                            if (pad.has_selection() &&
+                                !ImGui::IsPopupOpen("##pad_designer")) {
+                                ImGui::OpenPopup("##pad_designer");
+                            }
+                            if (ImGui::BeginPopupModal("##pad_designer", nullptr,
+                                                       ImGuiWindowFlags_AlwaysAutoResize)) {
                                 if (pad.designer_controls(nullptr)) pad.layout().save(cfg_dir);
-                                /* The cluster modal. Opens whenever the
-                                 * tap landed on a cluster or extra (the
-                                 * Overlay sets selected_); Done (or
-                                 * clearing the selection elsewhere) closes
-                                 * it. Modal so a stray tap outside the
-                                 * preview does not silently deselect. */
-                                if (pad.has_selection() &&
-                                    !ImGui::IsPopupOpen("##pad_cluster")) {
-                                    ImGui::OpenPopup("##pad_cluster");
-                                }
-                                if (ImGui::BeginPopupModal("##pad_cluster", nullptr,
-                                                           ImGuiWindowFlags_AlwaysAutoResize)) {
+                                if (pad.has_selection()) {
+                                    ImGui::Separator();
                                     if (pad.cluster_panel()) pad.layout().save(cfg_dir);
-                                    ImGui::EndPopup();
+                                } else {
+                                    ImGui::Spacing();
+                                    TextDim("Tap a cluster in the preview to resize or hide it.");
                                 }
-                                ImGui::EndTabItem();
+                                ImGui::EndPopup();
                             }
-                            ImGui::EndTabBar();
+                            /* Cascade exit: when the modal closes and
+                             * nothing is selected any more, drop the
+                             * user back on the Edit tab too, not
+                             * stranded on a chrome-free preview. */
+                            if (g_pad_tab == 1 && !pad.has_selection() &&
+                                !ImGui::IsPopupOpen("##pad_designer")) {
+                                g_pad_tab = 0;
+                                g_pad_fullscreen = 0;
+                            }
                         }
                     }
 
