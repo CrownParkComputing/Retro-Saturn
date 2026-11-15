@@ -29,6 +29,9 @@ struct SafTree {
 
 /** Ask for another folder. Returns at once; the answer appears in trees(). */
 void saf_pick();
+std::string saf_take_picked();
+bool saf_restore_saves(const std::string &uri, const std::string &directory);
+bool saf_sync_saves(const std::string &uri, const std::string &directory);
 
 /** The folders granted so far. */
 std::vector<SafTree> saf_trees();
@@ -54,6 +57,8 @@ std::vector<SafEntry> saf_list(const std::string &uri, const std::string &sub);
  *  copied files of the same size return instantly. Empty on failure. */
 std::string saf_stage(const std::string &uri, const std::string &sub,
                       const std::string &name, const std::string &dest_dir);
+std::string saf_stage_disc(const std::string &uri, const std::string &sub,
+                          const std::string &name, const std::string &dest_dir);
 
 /** How far the running copy has got, 0..100, or -1 when none is running. */
 int saf_stage_progress();

@@ -43,8 +43,16 @@ object SafBridge {
 
     /** Set by MainActivity so the bridge can reach a Context and the picker. */
     @Volatile @JvmStatic var activity: MainActivity? = null
+    @Volatile private var applicationContext: Context? = null
+    @Volatile private var pickedTree: String = ""
 
-    private fun ctx(): Context? = activity?.applicationContext
+    fun initialize(context: Context) { applicationContext = context.applicationContext }
+
+    private fun ctx(): Context? = applicationContext ?: activity?.applicationContext
+
+    @JvmStatic
+    @Synchronized
+    fun takePickedTree(): String = pickedTree.also { pickedTree = "" }
 
     /* ------------------------------------------------------------------ */
     /* Grants                                                              */
@@ -76,6 +84,7 @@ object SafBridge {
         have.add(uri.toString())
         s.edit().putStringSet(KEY, have).apply()
         ensureLayout(uri.toString())
+        pickedTree = uri.toString()
     }
 
     /**
@@ -185,6 +194,22 @@ object SafBridge {
         return true
     }
 
+    @JvmStatic
+    fun restoreSaves(treeUri: String, localDir: String): Boolean {
+        val c = ctx() ?: return false
+        val root = DocumentFile.fromTreeUri(c, Uri.parse(treeUri)) ?: return false
+        val saves = findFolder(root, "saves") ?: root.createDirectory("saves") ?: return false
+        return SaveFolderSync.restore(c, saves, File(localDir))
+    }
+
+    @JvmStatic
+    fun syncSaves(treeUri: String, localDir: String): Boolean {
+        val c = ctx() ?: return false
+        val root = DocumentFile.fromTreeUri(c, Uri.parse(treeUri)) ?: return false
+        val saves = findFolder(root, "saves") ?: root.createDirectory("saves") ?: return false
+        return SaveFolderSync.sync(c, saves, File(localDir))
+    }
+
     /** What `kind` is actually called inside this tree, for showing a person. */
     @JvmStatic
     fun folderName(treeUri: String, kind: String): String {
@@ -239,19 +264,27 @@ object SafBridge {
         var dir = try { DocumentFile.fromTreeUri(c, Uri.parse(treeUri)) } catch (_: Exception) { null }
             ?: return ""
         if (sub.isNotEmpty()) dir = findFolder(dir, sub) ?: return ""
-        val src = dir.findFile(name) ?: return ""
+        val relative = name.replace('\\', '/')
+        if (relative.startsWith('/') || relative.split('/').any { it == ".." }) return ""
+        var src = dir
+        for (part in relative.split('/').filter { it.isNotEmpty() }) {
+            src = src.findFile(part) ?: src.listFiles().firstOrNull { it.name?.equals(part, ignoreCase = true) == true } ?: return ""
+        }
         val want = src.length()
 
-        val dst = File(destDir, name)
-        // Refresh local artwork on Rescan, including same-size replacements.
-        if (sub != "artwork" && dst.exists() && dst.length() == want) return dst.absolutePath
-        File(destDir).mkdirs()
+        val dst = File(destDir, relative)
+        val sourceInfo = "${src.uri}\n$want\n${src.lastModified()}"
+        val metadata = File(dst.path + ".source")
+        // Keep large discs cached, while distinguishing parents and replaced source files.
+        if (sub != "artwork" && sub != "bios" && dst.exists() && dst.length() == want &&
+            metadata.exists() && metadata.readText() == sourceInfo) return dst.absolutePath
+        dst.parentFile?.mkdirs()
 
         progress = 0
         try {
             c.contentResolver.openInputStream(src.uri).use { input ->
                 if (input == null) return ""
-                val tmp = File(destDir, "$name.part")
+                val tmp = File(dst.path + ".part")
                 tmp.outputStream().use { out ->
                     val buf = ByteArray(1 shl 20)
                     var done = 0L
@@ -266,6 +299,7 @@ object SafBridge {
                 /* Renamed only once it is complete, so an interrupted copy is
                  * never mistaken for a game. */
                 if (!tmp.renameTo(dst)) { tmp.delete(); return "" }
+                metadata.writeText(sourceInfo)
             }
         } catch (_: Exception) {
             return ""
@@ -273,6 +307,35 @@ object SafBridge {
             progress = -1
         }
         return dst.absolutePath
+    }
+
+    /** Stage a disc together with the tracks its sheet references. */
+    @JvmStatic
+    fun stageDisc(treeUri: String, sub: String, name: String, destDir: String): String {
+        val path = stage(treeUri, sub, name, destDir)
+        if (path.isEmpty()) return ""
+        val file = File(path)
+        val parent = name.replace('\\', '/').substringBeforeLast('/', "")
+        fun companion(relative: String): Boolean {
+            val full = if (parent.isEmpty()) relative else "$parent/$relative"
+            return stage(treeUri, sub, full, destDir).isNotEmpty()
+        }
+        when (file.extension.lowercase()) {
+            "cue" -> {
+                val text = file.readText()
+                val line = Regex("""(?im)^(\s*FILE\s+)(?:"([^"]+)"|(\S+))(.*)$""")
+                for (match in line.findAll(text)) {
+                    val track = match.groupValues[2].ifEmpty { match.groupValues[3] }.replace('\\', '/')
+                    if (!companion(track)) return ""
+                }
+                if (text.contains('\\')) file.writeText(line.replace(text) { match ->
+                    match.groupValues[1] + "\"" + match.groupValues[2].ifEmpty { match.groupValues[3] }.replace('\\', '/') + "\"" + match.groupValues[4]
+                })
+            }
+            "ccd" -> if (!companion(file.nameWithoutExtension + ".img")) return ""
+            "mds" -> if (!companion(file.nameWithoutExtension + ".mdf")) return ""
+        }
+        return path
     }
 
     /**

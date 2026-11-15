@@ -28,6 +28,13 @@ UIViewController *presenter()
             return controller;
         }
     }
+    // SDL also supports the legacy UIApplication lifecycle without a scene manifest.
+    for (UIWindow *window in UIApplication.sharedApplication.windows) {
+        if (!window.isKeyWindow) continue;
+        UIViewController *controller = window.rootViewController;
+        while (controller.presentedViewController) controller = controller.presentedViewController;
+        return controller;
+    }
     return nil;
 }
 }

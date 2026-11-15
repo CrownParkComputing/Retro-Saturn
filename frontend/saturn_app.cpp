@@ -30,6 +30,7 @@
 #include "saturn_artwork.h"
 #include "saturn_saf.h"
 #include "saturn_setup.h"
+#include "saturn_lifecycle.h"
 #include "touch_pad.h"
 
 #ifndef SATURN_APP_VERSION
@@ -848,9 +849,34 @@ int main(int argc, char **argv)
      * its progress, and states/ holds our snapshots of the whole machine. The
      * first is the one that must never be lost.
      */
-    std::string saves_dir, states_dir, bram_path;
+    std::string saves_dir, states_dir, bram_path, active_saves_tree;
+    bool saves_sync_failed = false;
+    auto sync_saves = [&] {
+        if (demo_session || active_saves_tree.empty()) return true;
+        const bool okay = saturn::saf_sync_saves(active_saves_tree, saves_dir);
+        saves_sync_failed = !okay;
+        return okay;
+    };
     auto resolve_saves = [&] {
+        active_saves_tree = cfg.disc_tree;
         saves_dir = cfg.saves_dir;
+        if (!active_saves_tree.empty()) {
+            uint64_t hash = 14695981039346656037ULL;
+            for (unsigned char c : active_saves_tree) { hash ^= c; hash *= 1099511628211ULL; }
+            char suffix[32];
+            snprintf(suffix, sizeof suffix, "saves-%016llx", (unsigned long long)hash);
+            saves_dir = cfg_dir + suffix;
+            SDL_CreateDirectory(saves_dir.c_str());
+            saves_sync_failed = !saturn::saf_restore_saves(active_saves_tree, saves_dir);
+            // Carry forward battery RAM from releases that only kept a private fallback.
+            const std::string old_ram = cfg_dir + "Saves/backup-ram.bin";
+            const std::string migrated = cfg_dir + "saves-cache-migrated";
+            if (!path_is_file(saves_dir + "/backup-ram.bin") && !path_is_file(migrated) && path_is_file(old_ram)) {
+                if (SDL_CopyFile(old_ram.c_str(), (saves_dir + "/backup-ram.bin").c_str())) {
+                    if (SDL_IOStream *marker = SDL_IOFromFile(migrated.c_str(), "wb")) SDL_CloseIO(marker);
+                }
+            }
+        }
         if (saves_dir.empty()) {
             saves_dir = cfg.disc_root.empty() ? (cfg_dir + "Saves")
                                               : (cfg.disc_root + "/Saves");
@@ -905,8 +931,9 @@ int main(int argc, char **argv)
             (demo_session ? demo_bram_path : bram_path).c_str(), 0);
     };
     auto save_bram = [&] {
-        ymir_bridge_save_internal_backup_memory(ymir,
+        const int32_t result = ymir_bridge_save_internal_backup_memory(ymir,
             (demo_session ? demo_bram_path : bram_path).c_str());
+        if (result == YMIR_OK) sync_saves();
     };
     load_bram();
 
@@ -939,7 +966,7 @@ int main(int argc, char **argv)
             const std::string cache = cfg_dir + "discs";
             SDL_CreateDirectory(cache.c_str());
             message = "Copying " + d->file + " from the folder you granted...";
-            disc_path = saturn::saf_stage(d->tree, "cd", d->file, cache);
+            disc_path = saturn::saf_stage_disc(d->tree, "cd", d->file, cache);
             if (disc_path.empty()) {
                 message = "Could not copy " + d->file;
                 return;
@@ -1122,44 +1149,58 @@ int main(int argc, char **argv)
         return it->second;
     };
 
+    bool library_drag_item = false;
+    bool library_dragged = false;
+    auto library_tap = [&] {
+        const ImVec2 drag = ImGui::GetMouseDragDelta(0, ImGui::GetFontSize() * 0.5f);
+        return !library_dragged && drag.x == 0.0f && drag.y == 0.0f;
+    };
+    auto scroll_library = [&] {
+        const float threshold = ImGui::GetFontSize() * 0.5f;
+        if (ImGui::IsWindowHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem) &&
+            (library_drag_item || !ImGui::IsAnyItemActive()) && ImGui::IsMouseDragging(0, threshold)) {
+            library_dragged = true;
+            ImGui::SetScrollY(ImGui::GetScrollY() - ImGui::GetIO().MouseDelta.y);
+        }
+    };
     auto cover_card = [&](const saturn::Game &game, const char *sub, float card_w) -> bool {
         const float cover_h = card_w * 1.42f;
-        const Art empty;
-        const Art &a = ImGui::IsRectVisible(ImVec2(card_w, cover_h)) ? game_art(game) : empty;
-        ImGui::BeginGroup();
+        const float title_h = ImGui::GetTextLineHeight() * 2.0f;
+        const float spacing = ImGui::GetStyle().ItemSpacing.y;
+        const float card_h = cover_h + spacing + title_h + spacing + ImGui::GetTextLineHeight();
         const ImVec2 at = ImGui::GetCursorScreenPos();
-        ImGui::Dummy(ImVec2(card_w, cover_h));
-        const bool hit = ImGui::IsItemClicked();
+        const bool clicked = ImGui::InvisibleButton("##card", ImVec2(card_w, card_h));
+        library_drag_item |= ImGui::IsItemActive();
+        const bool hit = clicked && library_tap();
+        if (!ImGui::IsItemVisible()) return hit;
         ImDrawList *dl = ImGui::GetWindowDrawList();
+        const Art &a = game_art(game);
         if (a.tex) {
-            /* Fitted inside the box, whatever shape the artwork turned out
-             * to be -- local images may be title screens or box scans. */
             float w = card_w, h = w * (float)a.h / (float)a.w;
             if (h > cover_h) { h = cover_h; w = h * (float)a.w / (float)a.h; }
             dl->AddImage((ImTextureID)(intptr_t)a.tex,
                          ImVec2(at.x + (card_w - w) * 0.5f, at.y + (cover_h - h) * 0.5f),
                          ImVec2(at.x + (card_w + w) * 0.5f, at.y + (cover_h + h) * 0.5f));
         } else {
-            /* A plate where the cover will be, so the grid does not reflow
-             * under the pointer as pictures arrive. */
-            dl->AddRectFilled(at, ImVec2(at.x + card_w, at.y + cover_h),
-                              IM_COL32(28, 32, 44, 255), 4.0f);
-            dl->AddRect(at, ImVec2(at.x + card_w, at.y + cover_h),
-                        IM_COL32(60, 70, 92, 255), 4.0f);
+            dl->AddRectFilled(at, ImVec2(at.x + card_w, at.y + cover_h), IM_COL32(28, 32, 44, 255), 4.0f);
+            dl->AddRect(at, ImVec2(at.x + card_w, at.y + cover_h), IM_COL32(60, 70, 92, 255), 4.0f);
         }
-
-        /* Two lines for the title, always. Left to wrap freely a long one
-         * made its card taller than its neighbours, and a row is as tall as
-         * its tallest card, so the whole grid went ragged. */
-        ImGui::BeginChild((std::string("t") + game.title).c_str(),
-                          ImVec2(card_w, ImGui::GetTextLineHeight() * 2.2f));
-        ImGui::PushTextWrapPos(card_w);
-        ImGui::TextUnformatted(game.title.c_str());
-        ImGui::PopTextWrapPos();
-        if (ImGui::IsWindowHovered()) ImGui::SetTooltip("%s", game.title.c_str());
-        ImGui::EndChild();
-        if (sub && *sub) TextDim("%s", sub);
-        ImGui::EndGroup();
+        // A title is a label, never a nested scrolling window.
+        std::string label = game.title;
+        size_t end = game.title.size();
+        while (end > 0 && ImGui::CalcTextSize(label.c_str(), nullptr, false, card_w).y > title_h) {
+            --end;
+            while (end > 0 && ((unsigned char)game.title[end] & 0xC0) == 0x80) --end;
+            label = game.title.substr(0, end) + "...";
+        }
+        const ImVec2 text_at(at.x, at.y + cover_h + spacing);
+        dl->PushClipRect(text_at, ImVec2(text_at.x + card_w, text_at.y + title_h), true);
+        dl->AddText(ImGui::GetFont(), ImGui::GetFontSize(), text_at, ImGui::GetColorU32(ImGuiCol_Text), label.c_str(), nullptr, card_w);
+        dl->PopClipRect();
+        if (sub && *sub)
+            dl->AddText(ImVec2(at.x, text_at.y + title_h + spacing), IM_COL32(158, 163, 178, 255), sub);
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal) && ImGui::GetIO().MouseSource != ImGuiMouseSource_TouchScreen)
+            ImGui::SetTooltip("%s", game.title.c_str());
         return hit;
     };
 
@@ -1249,8 +1290,10 @@ int main(int argc, char **argv)
      * the emulation, and the mailbox is still served while paused, so swapping
      * a disc or saving a state from the menu still works.
      */
-    bool machine_running = running_view;
-    ymir_bridge_set_presentation_paused(ymir, machine_running ? 0 : 1);
+    saturn::AppLifecycle lifecycle(SDL_GetWindowID(win), [ymir](bool paused) {
+        ymir_bridge_set_presentation_paused(ymir, paused ? 1 : 0);
+    });
+    lifecycle.set_playing(running_view);
 
     /*
      * The gun, and the mouse.
@@ -1346,6 +1389,7 @@ int main(int argc, char **argv)
     auto do_save_state = [&]() {
         if (loaded_game_index < 0) return;
         say("Saved", ymir_bridge_save_state(ymir, state_new_path().c_str()));
+        save_bram();
     };
     auto do_load_state = [&]() {
         if (loaded_game_index < 0) return;
@@ -1355,11 +1399,10 @@ int main(int argc, char **argv)
     };
     char search[96] = {0};
     bool quit = false;
-    bool app_background = false;
 
     auto return_to_wizard = [&] {
         if (!demo_session) return;
-        ymir_bridge_set_presentation_paused(ymir, 1);
+        lifecycle.set_playing(false);
         pad.release_all(pad_sink);
         save_bram();
         ymir_bridge_eject_disc(ymir);
@@ -1405,12 +1448,9 @@ int main(int argc, char **argv)
             ImGui_ImplSDL3_ProcessEvent(&ev);
             if (ev.type == SDL_EVENT_QUIT) quit = true;
             if (ev.type == SDL_EVENT_WILL_ENTER_BACKGROUND) {
-                app_background = true;
-                ymir_bridge_set_presentation_paused(ymir, 1);
                 save_bram();
                 ymir_bridge_save_smpc_state(ymir, smpc_path.c_str());
             }
-            if (ev.type == SDL_EVENT_DID_ENTER_FOREGROUND) app_background = false;
             if (demo_session && ev.type == SDL_EVENT_KEY_DOWN &&
                 (ev.key.scancode == SDL_SCANCODE_ESCAPE ||
                  ev.key.scancode == SDL_SCANCODE_AC_BACK)) {
@@ -1569,6 +1609,17 @@ int main(int argc, char **argv)
             }
         }
 
+        if (lifecycle.take_pause_request()) {
+            if (running_view) show_pause = true;
+            pad.release_all(pad_sink);
+            save_bram();
+            ymir_bridge_save_smpc_state(ymir, smpc_path.c_str());
+        }
+        if (lifecycle.suspended()) {
+            SDL_Delay(20);
+            continue;
+        }
+
         /*
          * The sticks, read rather than evented.
          *
@@ -1684,6 +1735,18 @@ int main(int argc, char **argv)
         ImGui_ImplSDLRenderer3_NewFrame();
         ImGui_ImplSDL3_NewFrame();
         ImGui::NewFrame();
+        library_drag_item = false;
+        if (ImGui::IsMouseClicked(0)) library_dragged = false;
+
+        if (const std::string chosen = saturn::saf_take_picked(); !chosen.empty()) {
+            save_bram();
+            adopt_tree(chosen);
+            resolve_saves();
+            load_bram();
+            rescan();
+            adopt_bios_from_discs();
+            saturn::save_app_config(cfg_path, cfg);
+        }
 
         /* ================= first run ================= */
         if (wizard) {
@@ -2854,6 +2917,7 @@ int main(int argc, char **argv)
                         }
                         ImGui::PopID();
                     }
+                    scroll_library();
                     ImGui::EndChild();
                 } else {
                     ImGui::BeginChild("##list");
@@ -2865,19 +2929,30 @@ int main(int argc, char **argv)
                             continue;
                         ImGui::PushID((int)i);
                         const bool in_drive = (int)i == loaded_game_index;
-                        if (in_drive) ImGui::PushStyleColor(ImGuiCol_Text,
-                                          ImVec4(0.42f, 0.71f, 0.97f, 1.0f));
-                        if (ImGui::Selectable(g.title.c_str(), in_drive, 0,
-                                              ImVec2(0, fs * 1.9f))) {
+                        const ImVec2 at = ImGui::GetCursorScreenPos();
+                        const float row_h = fs * 1.9f;
+                        const bool pressed = ImGui::InvisibleButton("##game", ImVec2(fw, row_h));
+                        library_drag_item |= ImGui::IsItemActive();
+                        ImDrawList *dl = ImGui::GetWindowDrawList();
+                        if (ImGui::IsItemHovered() || in_drive)
+                            dl->AddRectFilled(at, ImVec2(at.x + fw, at.y + row_h),
+                                ImGui::GetColorU32(in_drive ? ImGuiCol_HeaderActive : ImGuiCol_HeaderHovered));
+                        dl->PushClipRect(at, ImVec2(at.x + fw * 0.65f, at.y + row_h), true);
+                        dl->AddText(ImVec2(at.x, at.y + (row_h - fs) * 0.5f), ImGui::GetColorU32(ImGuiCol_Text), g.title.c_str());
+                        dl->PopClipRect();
+                        if (pressed && library_tap()) {
                             insert_disc((int)i, 0);
                             if (loaded_game_index >= 0) face = Face::Launch;
                         }
-                        if (in_drive) ImGui::PopStyleColor();
-                        ImGui::SameLine(fw * 0.66f);
-                        if (g.multi()) TextDim("%zu discs", g.discs.size());
-                        else           TextDim("%s", g.discs[0].file.c_str());
+                        char detail[64];
+                        if (g.multi()) snprintf(detail, sizeof detail, "%zu discs", g.discs.size());
+                        else SDL_strlcpy(detail, g.discs[0].file.c_str(), sizeof detail);
+                        dl->PushClipRect(ImVec2(at.x + fw * 0.66f, at.y), ImVec2(at.x + fw, at.y + row_h), true);
+                        dl->AddText(ImVec2(at.x + fw * 0.66f, at.y + (row_h - fs) * 0.5f), IM_COL32(158, 163, 178, 255), detail);
+                        dl->PopClipRect();
                         ImGui::PopID();
                     }
+                    scroll_library();
                     ImGui::EndChild();
                 }
             }
@@ -3071,6 +3146,7 @@ int main(int argc, char **argv)
                             if (ImGui::IsItemActive() &&
                                 ImGui::GetIO().MouseDownDuration[0] > 0.6f) {
                                 SDL_RemovePath(sv.file.c_str());
+                                sync_saves();
                                 say("Deleted", YMIR_OK);
                             }
                             if (ImGui::IsItemHovered())
@@ -3160,6 +3236,7 @@ int main(int argc, char **argv)
                                     const std::string f = states_dir + "/" + kv.first +
                                                           ".s" + std::to_string(i + 1);
                                     SDL_RemovePath(f.c_str());
+                                    sync_saves();
                                     say("Deleted", YMIR_OK);
                                 }
                                 if (ImGui::IsItemHovered())
@@ -3316,6 +3393,7 @@ int main(int argc, char **argv)
                         ImGui::Spacing();
                         ImGui::TextUnformatted("Saves");
                         ImGui::SetNextItemWidth(-FLT_MIN);
+                        ImGui::BeginDisabled(!cfg.disc_tree.empty());
                         if (ImGui::InputText("##saves", saves_buf, sizeof saves_buf,
                                              ImGuiInputTextFlags_EnterReturnsTrue)) {
                             save_bram();
@@ -3324,7 +3402,11 @@ int main(int argc, char **argv)
                             load_bram();
                             saturn::save_app_config(cfg_path, cfg);
                         }
-                        TextDimWrappedF("%s", saves_dir.c_str());
+                        ImGui::EndDisabled();
+                        TextDimWrappedF("%s", cfg.disc_tree.empty() ? saves_dir.c_str()
+                            : saturn::saf_folder_name(cfg.disc_tree, "saves").c_str());
+                        if (saves_sync_failed)
+                            TextDimWrapped("Could not update the selected saves folder. Progress is retained on this device; restore folder access to sync it.");
                         col_end();
                     }
 
@@ -3897,20 +3979,8 @@ int main(int argc, char **argv)
             }
         }
 
-        /* One place decides whether the Saturn is running, and it is the only
-         * caller of the pause. Scattering set_presentation_paused around the
-         * places that change the view is how you end up with a machine still
-         * playing music behind a menu. */
-        {
-            const bool want = running_view && !show_pause && !app_background;
-            if (want != machine_running) {
-                machine_running = want;
-                ymir_bridge_set_presentation_paused(ymir, want ? 0 : 1);
-                /* A finger that was down when the menu opened must not stay
-                 * down in the Saturn behind it. */
-                if (!want) pad.release_all(pad_sink);
-            }
-        }
+        lifecycle.set_playing(running_view && !show_pause);
+        if (!running_view || show_pause) pad.release_all(pad_sink);
 
         ImGui::Render();
         SDL_SetRenderDrawColor(ren, 14, 16, 23, 255);
@@ -3945,6 +4015,8 @@ int main(int argc, char **argv)
         SDL_RenderPresent(ren);
     }
 
+    lifecycle.set_playing(false);
+    lifecycle.detach();
     save_bram();
     ymir_bridge_save_smpc_state(ymir, smpc_path.c_str());
     saturn::save_app_config(cfg_path, cfg);

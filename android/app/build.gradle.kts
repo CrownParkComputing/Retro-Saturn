@@ -82,6 +82,7 @@ android {
         // below what is already there.
         versionCode = 6
         versionName = "2.2.0"
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         ndk {
             // Only the ABI the core has actually been built for. Listing more
             // ships an APK that installs and then fails to load a library,
@@ -141,4 +142,6 @@ dependencies {
     // ActivityResultLauncher the folder picker needs.
     implementation("androidx.documentfile:documentfile:1.0.1")
     implementation("androidx.activity:activity-ktx:1.9.3")
+    androidTestImplementation("androidx.test:runner:1.6.2")
+    androidTestImplementation("androidx.test.ext:junit:1.2.1")
 }

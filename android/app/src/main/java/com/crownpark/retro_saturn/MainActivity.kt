@@ -39,6 +39,7 @@ class MainActivity : SDLActivity() {
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        SafBridge.initialize(this)
         SafBridge.activity = this
         unpackAssets()
         writeCandidateRoots()

@@ -1,4 +1,5 @@
 #include "audio_backend.h"
+#include "saturn_lifecycle.h"
 #include <SDL3/SDL.h>
 #include <atomic>
 #include <cstdio>
@@ -36,6 +37,43 @@ int main()
         const int stopped_at = consumed.load();
         SDL_Delay(40);
         okay = okay && consumed.load() == stopped_at && backend->get_level(backend->user) == 0;
+    }
+    {
+        saturn::AppLifecycle lifecycle(7, [&](bool paused) {
+            if (paused) backend->stop(backend->user);
+            else backend->start(backend->user);
+        });
+        backend->set_muted(backend->user, 0);
+        auto send = [](Uint32 type, SDL_WindowID window = 7) {
+            SDL_Event event{};
+            event.type = type;
+            event.window.windowID = window;
+            return SDL_PushEvent(&event);
+        };
+        auto silent = [&] {
+            const int stopped = consumed.load();
+            SDL_Delay(40);
+            return consumed.load() == stopped && backend->get_level(backend->user) == 0;
+        };
+        for (const Uint32 event : {SDL_EVENT_WILL_ENTER_BACKGROUND, SDL_EVENT_WINDOW_FOCUS_LOST, SDL_EVENT_WINDOW_MINIMIZED}) {
+            lifecycle.set_playing(true);
+            const int before = consumed.load();
+            okay = okay && wait_for([&] { return consumed.load() > before; });
+            okay = send(event) && okay;
+            // No SDL_PollEvent: audio must already be stopped before the loop resumes.
+            okay = silent() && lifecycle.suspended() && okay;
+            lifecycle.set_playing(true); // An in-flight UI frame must not restart background audio.
+            send(SDL_EVENT_DID_ENTER_FOREGROUND);
+            send(SDL_EVENT_WINDOW_FOCUS_GAINED);
+            send(SDL_EVENT_WINDOW_RESTORED);
+            okay = silent() && !lifecycle.suspended() && lifecycle.take_pause_request() && okay;
+        }
+        lifecycle.set_playing(true);
+        const int before = consumed.load();
+        send(SDL_EVENT_WINDOW_MOUSE_LEAVE);
+        send(SDL_EVENT_WINDOW_FOCUS_LOST, 99);
+        okay = wait_for([&] { return consumed.load() > before; }) && !lifecycle.suspended() && okay;
+        lifecycle.set_playing(false);
     }
     backend->destroy(backend->user);
     delete backend;

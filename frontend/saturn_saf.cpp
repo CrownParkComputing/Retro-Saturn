@@ -130,6 +130,32 @@ std::vector<std::vector<std::string>> rows(const std::string &text, int fields)
 bool saf_available() { return true; }
 
 void saf_pick() { call_void("pick", "()V", {}); }
+std::string saf_take_picked() { return call_str("takePickedTree", "()Ljava/lang/String;", {}); }
+
+namespace {
+bool save_call(const char *name, const std::string &uri, const std::string &directory)
+{
+    JNIEnv *env = (JNIEnv *)SDL_GetAndroidJNIEnv();
+    if (!env) return false;
+    jclass cls = bridge_class(env);
+    if (!cls) return false;
+    jmethodID method = env->GetStaticMethodID(cls, name, "(Ljava/lang/String;Ljava/lang/String;)Z");
+    if (!method) { env->ExceptionClear(); return false; }
+    jstring tree = env->NewStringUTF(uri.c_str());
+    jstring dir = env->NewStringUTF(directory.c_str());
+    const bool okay = env->CallStaticBooleanMethod(cls, method, tree, dir) == JNI_TRUE;
+    const bool error = env->ExceptionCheck();
+    if (error) env->ExceptionClear();
+    env->DeleteLocalRef(tree);
+    env->DeleteLocalRef(dir);
+    return okay && !error;
+}
+}
+
+bool saf_restore_saves(const std::string &uri, const std::string &directory)
+{ return save_call("restoreSaves", uri, directory); }
+bool saf_sync_saves(const std::string &uri, const std::string &directory)
+{ return save_call("syncSaves", uri, directory); }
 
 void saf_forget(const std::string &uri)
 {
@@ -191,6 +217,14 @@ std::string saf_stage(const std::string &uri, const std::string &sub,
 
 int saf_stage_progress() { return call_int("stageProgress"); }
 
+std::string saf_stage_disc(const std::string &uri, const std::string &sub,
+                          const std::string &name, const std::string &dest_dir)
+{
+    return call_str("stageDisc",
+                    "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;",
+                    {uri, sub, name, dest_dir});
+}
+
 std::string saf_folder_name(const std::string &uri, const std::string &kind)
 {
     const std::string n = call_str(
@@ -207,12 +241,17 @@ namespace saturn {
 
 bool saf_available() { return false; }
 void saf_pick() {}
+std::string saf_take_picked() { return {}; }
+bool saf_restore_saves(const std::string &, const std::string &) { return false; }
+bool saf_sync_saves(const std::string &, const std::string &) { return false; }
 std::vector<SafTree> saf_trees() { return {}; }
 void saf_forget(const std::string &) {}
 bool saf_ensure_layout(const std::string &) { return false; }
 std::vector<SafEntry> saf_list(const std::string &, const std::string &) { return {}; }
 std::string saf_stage(const std::string &, const std::string &,
                       const std::string &, const std::string &) { return {}; }
+std::string saf_stage_disc(const std::string &, const std::string &,
+                          const std::string &, const std::string &) { return {}; }
 int saf_stage_progress() { return -1; }
 std::string saf_folder_name(const std::string &, const std::string &k) { return k; }
 
