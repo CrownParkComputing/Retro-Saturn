@@ -100,6 +100,8 @@ bool load_app_config(const std::string &path, AppConfig &out)
     if (text.empty()) return false;
     const auto kv = parse_kv(text);
 
+    out.parent_root = str_of(kv, "parent_root", out.parent_root);
+    out.artwork_dir = str_of(kv, "artwork_dir", out.artwork_dir);
     out.disc_root   = str_of(kv, "disc_root", out.disc_root);
     out.bios_path   = str_of(kv, "bios_path", out.bios_path);
     out.saves_dir   = str_of(kv, "saves_dir", out.saves_dir);
@@ -125,8 +127,6 @@ bool load_app_config(const std::string &path, AppConfig &out)
     if (s.scaling < 0 || s.scaling > 2) s.scaling = 0;
     s.integer_scale        = bool_of(kv, "integer_scale", s.integer_scale);
     s.aspect               = int_of(kv, "aspect", s.aspect) ? 1 : 0;
-    s.art_kind             = int_of(kv, "art_kind", s.art_kind);
-    if (s.art_kind < 0 || s.art_kind > 3) s.art_kind = 1;
     s.crosshair            = int_of(kv, "crosshair", s.crosshair);
     if (s.crosshair < 50 || s.crosshair > 600) s.crosshair = 250;
     s.port1                = peripheral_of(kv, "port1", s.port1);
@@ -143,6 +143,8 @@ bool save_app_config(const std::string &path, const AppConfig &cfg)
 {
     const Settings &s = cfg.machine;
     std::string t = "# Retro-Saturn settings\n";
+    t += "parent_root=" + cfg.parent_root + "\n";
+    t += "artwork_dir=" + cfg.artwork_dir + "\n";
     t += "disc_root=" + cfg.disc_root + "\n";
     t += "bios_path=" + cfg.bios_path + "\n";
     t += "saves_dir=" + cfg.saves_dir + "\n";
@@ -163,7 +165,6 @@ bool save_app_config(const std::string &path, const AppConfig &cfg)
     t += "scaling=" + std::to_string(s.scaling) + "\n";
     t += "integer_scale="; t += s.integer_scale ? "1" : "0"; t += "\n";
     t += "aspect=" + std::to_string(s.aspect) + "\n";
-    t += "art_kind=" + std::to_string(s.art_kind) + "\n";
     t += "crosshair=" + std::to_string(s.crosshair) + "\n";
     t += "port1=" + std::to_string((int)s.port1) + "\n";
     t += "port2=" + std::to_string((int)s.port2) + "\n";

@@ -27,7 +27,7 @@
  */
 #include "saturn_config.h"
 #include "saturn_library.h"
-#include "saturn_media.h"
+#include "saturn_artwork.h"
 #include "saturn_saf.h"
 #include "saturn_setup.h"
 #include "touch_pad.h"
@@ -45,6 +45,7 @@
 
 #define STB_IMAGE_IMPLEMENTATION
 #define STBI_ONLY_PNG
+#define STBI_ONLY_JPEG
 #include "stb_image.h"
 
 #include <SDL3/SDL.h>
@@ -62,15 +63,17 @@ extern "C" {
 
 #include <array>
 #include <cstdarg>
+#include <cstdlib>
 #include <cstdio>
 #include <algorithm>
 #include <cstring>
 #include <map>
-#include <set>
 #include <string>
 #include <vector>
 
 namespace {
+
+constexpr int kWizardDemoStep = 3;
 
 /* ------------------------------------------------------------------ */
 /* Small helpers                                                       */
@@ -195,16 +198,50 @@ std::string asset_base(void)
     return std::string();
 }
 
-SDL_Texture *load_png(SDL_Renderer *ren, const char *path, int *out_w, int *out_h)
+SDL_Texture *load_image(SDL_Renderer *ren, const char *path, int *out_w, int *out_h,
+                        int max_size = 0, bool trim_transparency = false)
 {
     int w = 0, h = 0, comp = 0;
+    if (!stbi_info(path, &w, &h, &comp) || w > 8192 || h > 8192) return nullptr;
     stbi_uc *px = stbi_load(path, &w, &h, &comp, 4);
     if (!px) return nullptr;
 
+    const int source_w = w;
+    int left = 0, top = 0;
+    if (trim_transparency) {
+        int right = -1, bottom = -1;
+        left = w; top = h;
+        for (int y = 0; y < h; ++y)
+            for (int x = 0; x < w; ++x)
+                if (px[((size_t)y * source_w + x) * 4 + 3] > 8) {
+                    left = std::min(left, x); top = std::min(top, y);
+                    right = std::max(right, x); bottom = std::max(bottom, y);
+                }
+        if (right < left || bottom < top) { stbi_image_free(px); return nullptr; }
+        w = right - left + 1;
+        h = bottom - top + 1;
+    }
+    std::vector<unsigned char> thumbnail;
+    const unsigned char *pixels = px + ((size_t)top * source_w + left) * 4;
+    int pitch = source_w * 4;
+    if (max_size > 0 && (w > max_size || h > max_size)) {
+        const float ratio = (float)max_size / (float)std::max(w, h);
+        const int tw = std::max(1, (int)(w * ratio));
+        const int th = std::max(1, (int)(h * ratio));
+        thumbnail.resize((size_t)tw * th * 4);
+        for (int y = 0; y < th; ++y)
+            for (int x = 0; x < tw; ++x)
+                std::memcpy(&thumbnail[((size_t)y * tw + x) * 4],
+                            &px[((size_t)(top + y * h / th) * source_w + left + x * w / tw) * 4], 4);
+        pixels = thumbnail.data();
+        w = tw;
+        h = th;
+        pitch = tw * 4;
+    }
     SDL_Texture *t = SDL_CreateTexture(ren, SDL_PIXELFORMAT_RGBA32,
                                        SDL_TEXTUREACCESS_STATIC, w, h);
     if (t) {
-        SDL_UpdateTexture(t, nullptr, px, w * 4);
+        SDL_UpdateTexture(t, nullptr, pixels, pitch);
         /* Drawn smaller than it was authored, so filtered -- the opposite of
          * the emulator's framebuffer, which is hard pixels. */
         SDL_SetTextureScaleMode(t, SDL_SCALEMODE_LINEAR);
@@ -226,97 +263,15 @@ SDL_Texture *load_png(SDL_Renderer *ren, const char *path, int *out_w, int *out_
  * navigations stacked on top of each other to reach one page. The rail is the
  * navigation now and there is only the one.
  */
-enum class Face { Launch, Discs, Downloads, Saves, Memory,
+enum class Face { Launch, Discs, Saves, Memory,
                   Input, Picture, Sound, Processor, Drive,
                   About, Paths, Setup };
-
-/*
- * The initial of a title, for the A-Z strip.
- *
- * Everything that is not a letter is a '#', which is where numbers, brackets
- * and the occasional Japanese title end up -- one bucket for the awkward few
- * rather than a row of buttons nobody presses. Leading articles are not
- * stripped: a shelf sorted by what is printed on the spine is the shelf people
- * expect, and "The House of the Dead" is filed under T on a real one too.
- */
-/*
- * A title reduced to something two catalogues can agree on.
- *
- * A disc on the shelf is called "Daytona USA (US).chd" and the same game in
- * the catalogue is called "Daytona USA". Region tags, punctuation, spacing and
- * case are all noise for the purpose of deciding they are the same game, so
- * they all go, and anything from the first bracket onwards goes with them.
- */
-std::string match_key(const std::string &title)
-{
-    std::string k;
-    for (char c : title) {
-        if (c == '(' || c == '[') break;
-        if (SDL_isalnum((unsigned char)c))
-            k.push_back((char)SDL_tolower((unsigned char)c));
-    }
-    /*
-     * And the definite article, wherever the cataloguer put it.
-     *
-     * A disc is called "The House of the Dead" and the catalogue files it as
-     * "House of the Dead, The" -- the same game, two conventions, no match.
-     * Stripping a leading or trailing "the" gives both sides the same answer.
-     * Only at the ends: the one in the middle of that title is part of it.
-     */
-    if (k.size() > 5 && k.compare(0, 3, "the") == 0) k.erase(0, 3);
-    if (k.size() > 5 && k.compare(k.size() - 3, 3, "the") == 0) k.erase(k.size() - 3);
-    return k;
-}
-
-/* The kinds of picture the catalogue keeps, in the order the setting uses. */
-const char *const kArtKind[]  = { "titles", "box2d", "boxback", "marquee" };
-const char *const kArtLabel[] = { "Title screen", "Box, front", "Box, back", "Marquee" };
-/* Roughly the shape each kind actually is, so the card fits the picture
- * instead of framing it in empty plate. A title screen is a 4:3 screenshot, a
- * box scan is a tall Saturn case, a marquee is a wide banner. */
-const float kArtAspect[]      = { 0.78f, 1.42f, 1.42f, 0.5f };
-const int kArtKinds = 4;
 
 /* While the Pad page is on its Review tab, the rail collapses so the
  * 16:9 preview takes the whole window. File-scope so the rail
  * rendering and the SDL event loop can both read it. 2026-09-18. */
 static int g_pad_fullscreen = 0;
 static int g_pad_tab = 0;
-
-/*
- * The path to one kind of picture, derived from the one the catalogue hands
- * out for free.
- *
- * `preview` is always media/titles/<Name>.png, and the server files every
- * other kind under the same name in its own folder. Swapping the folder is
- * therefore enough, and it saves a request per game to find out something we
- * can already work out. `mediaTypes` says which ones exist, so a game with no
- * box scan falls back to the title screen rather than asking for a 404.
- */
-std::string art_path_for_kind(const saturn::MediaGame &g, const char *want)
-{
-    if (g.preview.empty() || !want) return std::string();
-    if (g.media_types.find(want) == std::string::npos) return std::string();
-    const size_t slash = g.preview.rfind('/');
-    if (slash == std::string::npos) return std::string();
-    size_t dir = g.preview.rfind('/', slash - 1);
-    dir = (dir == std::string::npos) ? 0 : dir + 1;
-    return g.preview.substr(0, dir) + want + g.preview.substr(slash);
-}
-
-std::string art_path_for(const saturn::MediaGame &g, int kind)
-{
-    if (g.preview.empty()) return std::string();
-    if (kind <= 0 || kind >= kArtKinds) return g.preview;
-    const std::string want = kArtKind[kind];
-    if (g.media_types.find(want) == std::string::npos) return g.preview;
-
-    const size_t slash = g.preview.rfind('/');
-    if (slash == std::string::npos) return g.preview;
-    size_t dir = g.preview.rfind('/', slash - 1);
-    dir = (dir == std::string::npos) ? 0 : dir + 1;
-    return g.preview.substr(0, dir) + want + g.preview.substr(slash);
-}
 
 char title_initial(const std::string &title)
 {
@@ -584,88 +539,32 @@ int main(int argc, char **argv)
      */
     ImGui::GetIO().IniFilename = nullptr;   /* no imgui.ini beside the binary */
 
-    /*
-     * A real typeface, at a size that suits the screen it is on.
-     *
-     * ImGui's built-in font is a 13-pixel bitmap designed for a debug overlay.
-     * It is legible on a desktop monitor at arm's length and unreadable on a
-     * handheld, which is where most of this application's life is spent. Roboto
-     * comes with the ImGui the core already vendors, so this costs a file next
-     * to the binary and nothing else.
-     *
-     * The size follows the display's own scale rather than a constant: the
-     * same number of pixels is a comfortable size on a 1080p monitor and a
-     * smear on a 400ppi phone.
-     */
-    /* Remembered past the style block: the on-screen pad shows itself by
-     * default only where there is glass to touch. */
     bool has_touch = false;
     {
-        float scale = SDL_GetWindowDisplayScale(win);
+        float scale = SDL_GetDisplayContentScale(SDL_GetDisplayForWindow(win));
         if (scale <= 0.0f) scale = 1.0f;
         const float pt = std::clamp(18.0f * scale, 14.0f, 40.0f);
-        bool got = false;
-        {
-            const std::string f = asset_base() + "assets/ui-font.ttf";
-            got = ImGui::GetIO().Fonts->AddFontFromFileTTF(f.c_str(), pt) != nullptr;
+        const std::string font = asset_base() + "assets/ui-font.ttf";
+        if (!ImGui::GetIO().Fonts->AddFontFromFileTTF(font.c_str(), pt)) {
+            ImFontConfig font_config;
+            font_config.SizePixels = pt;
+            ImGui::GetIO().Fonts->AddFontDefault(&font_config);
         }
-        if (!got) {
-            /* No file: the built-in font, scaled, rather than nothing. */
-            ImGui::GetIO().Fonts->AddFontDefault();
-            ImGui::GetIO().FontGlobalScale = std::clamp(scale * 1.3f, 1.0f, 2.5f);
-        }
-        /*
-    }
-    apply_style();
-    {
-        float scale = SDL_GetWindowDisplayScale(win);
-        if (scale <= 0.0f) scale = 1.0f;
-        /*
-         * Asking SDL is not enough on its own: a touch device is not
-         * enumerated until the first touch has actually happened, so at
-         * startup -- which is when the style is set -- a phone reports none.
-         * Android is therefore assumed, and the query is what catches a
-         * touchscreen on everything else.
-         */
-        /*
-         * Touch targets, where there is no pointer to be precise with.
-         *
-         * ImGui's defaults are drawn for a mouse: a few pixels of padding
-         * round a button is fine when you can put a cursor inside it and
-         * nowhere near enough for a thumb.
-         *
-         * Not gated on Android as such but on there being a touch device,
-         * because a Windows tablet and a handheld PC have the same problem and
-         * neither is Android.
-         */
-        bool touch = false;
+        apply_style();
 #if defined(__ANDROID__)
-        touch = true;
+        has_touch = true;
 #else
-        int n_touch = 0;
-        SDL_free(SDL_GetTouchDevices(&n_touch));
-        touch = n_touch > 0;
+        int count = 0;
+        SDL_free(SDL_GetTouchDevices(&count));
+        has_touch = count > 0;
 #endif
-        has_touch = touch;
-        if (touch) {
-            ImGuiStyle &st = ImGui::GetStyle();
-            st.FramePadding  = ImVec2(14.0f, 12.0f);
-            st.ItemSpacing   = ImVec2(12.0f, 10.0f);
-            st.ItemInnerSpacing = ImVec2(10.0f, 8.0f);
-            st.ScrollbarSize = 26.0f;
-            st.GrabMinSize   = 22.0f;
-            st.TouchExtraPadding = ImVec2(4.0f, 6.0f);
+        if (has_touch) {
+            ImGuiStyle &style = ImGui::GetStyle();
+            style.FramePadding = ImVec2(14.0f, 12.0f);
+            style.ItemSpacing = ImVec2(12.0f, 10.0f);
+            style.ScrollbarSize = 26.0f;
+            style.GrabMinSize = 22.0f;
         }
-
-        /*
-         * Scaling last, and the whole block after apply_style().
-         *
-         * The theme sets its own padding and spacing, so anything set before
-         * it was simply overwritten -- which is why the first attempt at
-         * thumb-sized buttons changed nothing at all. Scaling has to be last
-         * for the same reason: it multiplies whatever is in the style, and a
-         * style assigned afterwards is back to unscaled pixels.
-         */
         ImGui::GetStyle().ScaleAllSizes(std::clamp(scale, 1.0f, 2.5f));
     }
 
@@ -703,7 +602,44 @@ int main(int argc, char **argv)
     }
     saturn::load_app_config(cfg_path, cfg);
 
-    std::vector<saturn::Game> games = saturn::scan_discs(cfg.disc_root);
+    if (cfg.disc_tree.empty()) {
+        if (cfg.parent_root.empty()) cfg.parent_root = saturn::parent_for_discs(cfg.disc_root);
+        if (cfg.artwork_dir.empty()) cfg.artwork_dir = saturn::folder_for(cfg.parent_root, "artwork");
+        SDL_PathInfo info;
+        if (SDL_GetPathInfo(cfg.parent_root.c_str(), &info) && info.type == SDL_PATHTYPE_DIRECTORY)
+            SDL_CreateDirectory(cfg.artwork_dir.c_str());
+    } else {
+        saturn::saf_ensure_layout(cfg.disc_tree);
+    }
+    saturn::ArtworkLibrary artwork;
+    unsigned artwork_revision = 1;
+    artwork.scan(cfg.artwork_dir, cfg.disc_tree);
+
+    bool demo_session = false;
+    bool demo_tested = false;
+    std::string demo_error;
+    const std::string demo_saves_dir = cfg_dir + "wizard-demo";
+    const std::string demo_bram_path = demo_saves_dir + "/backup-ram.bin";
+    const std::string demo_restore_path = demo_saves_dir + "/original-backup-ram.bin";
+    auto demo_game = [&] {
+        saturn::Game g;
+        saturn::Disc d;
+        d.path = saturn::demo_disc_path();
+        d.file = "PPPong.cue";
+        g.title = saturn::demo_title();
+        g.discs.push_back(d);
+        return g;
+    };
+
+    /* ---- what is in the drive ---- */
+    std::string loaded_title;     /* empty = no disc */
+    std::string loaded_path;
+    std::string loaded_tree;
+    int  loaded_disc_index = 0;
+    int  loaded_game_index = -1;
+    std::string message;          /* one line, shown under the drive */
+
+    std::vector<saturn::Game> games;
     /*
      * The shelf comes from a path, or from a granted folder, never both.
      *
@@ -717,7 +653,27 @@ int main(int argc, char **argv)
             games = saturn::scan_discs_saf(cfg.disc_tree, "cd");
         else
             games = saturn::scan_discs(cfg.disc_root);
+        if (demo_session) games.insert(games.begin(), demo_game());
+        artwork.scan(cfg.artwork_dir, cfg.disc_tree);
+        ++artwork_revision;
+        // Adding artwork or discs must not change which game is in the drive.
+        loaded_game_index = -1;
+        for (size_t i = 0; i < games.size(); ++i)
+            for (size_t d = 0; d < games[i].discs.size(); ++d) {
+                const auto &disc = games[i].discs[d];
+                if ((!loaded_path.empty() && disc.path == loaded_path) ||
+                    (!loaded_tree.empty() && disc.tree == loaded_tree && disc.file == base_name(loaded_path))) {
+                    loaded_game_index = (int)i;
+                    loaded_disc_index = (int)d;
+                }
+            }
+        if (loaded_game_index < 0) {
+            loaded_title.clear();
+            loaded_path.clear();
+            loaded_tree.clear();
+        }
     };
+    rescan();
 
     /* ---- the machine ---- */
     YmirInstance *ymir = ymir_bridge_create();
@@ -785,19 +741,12 @@ int main(int argc, char **argv)
             if (t.uri == tree) real = t.path;
 
         if (!real.empty()) {
-            /* A path, so use it and forget the tree: every part of the app
-             * works better with one, and staging would be copying a file onto
-             * the device it is already on.
-             *
-             * Through folder_for, so a library already sitting in "Games" is
-             * found rather than a new empty "cd" being made beside it. */
-            cfg.disc_tree.clear();
-            cfg.disc_root = saturn::folder_for(real, "cd");
-            cfg.saves_dir = saturn::folder_for(real, "saves");
-            SDL_CreateDirectory(cfg.disc_root.c_str());
-            SDL_CreateDirectory(cfg.saves_dir.c_str());
+            saturn::configure_parent_folder(cfg, real);
         } else {
+            cfg.parent_root.clear();
+            cfg.artwork_dir.clear();
             cfg.disc_root.clear();
+            cfg.saves_dir.clear();
         }
         saturn::save_app_config(cfg_path, cfg);
     };
@@ -831,9 +780,7 @@ int main(int argc, char **argv)
         if (cfg.disc_root.empty()) return;
         /* A path: the bios folder beside the discs first, whatever it is
          * called, then among the discs themselves. */
-        const size_t slash = cfg.disc_root.rfind('/');
-        const std::string parent = slash == std::string::npos
-                                 ? cfg.disc_root : cfg.disc_root.substr(0, slash);
+        const std::string parent = cfg.parent_root;
         std::string found = saturn::find_bios_in(saturn::folder_for(parent, "bios"));
         if (found.empty()) found = saturn::find_bios_in(cfg.disc_root);
         if (found.empty()) return;
@@ -941,25 +888,24 @@ int main(int argc, char **argv)
      * crash costs nothing.
      */
     auto load_bram = [&] {
-        ymir_bridge_load_internal_backup_memory(ymir, bram_path.c_str(), 0);
+        ymir_bridge_load_internal_backup_memory(ymir,
+            (demo_session ? demo_bram_path : bram_path).c_str(), 0);
     };
     auto save_bram = [&] {
-        ymir_bridge_save_internal_backup_memory(ymir, bram_path.c_str());
+        ymir_bridge_save_internal_backup_memory(ymir,
+            (demo_session ? demo_bram_path : bram_path).c_str());
     };
     load_bram();
-
-    /* ---- what is in the drive ---- */
-    std::string loaded_title;     /* empty = no disc */
-    std::string loaded_path;
-    int  loaded_disc_index = 0;
-    int  loaded_game_index = -1;
-    std::string message;          /* one line, shown under the drive */
 
     auto insert_disc = [&](int gameIndex, int discIndex) {
         if (gameIndex < 0 || gameIndex >= (int)games.size()) return;
         const saturn::Game &g = games[gameIndex];
         const saturn::Disc *d = g.disc((size_t)discIndex);
         if (!d) return;
+        if (d->path == saturn::demo_disc_path() && !demo_session) {
+            message = "Run the bundled demo from the setup wizard.";
+            return;
+        }
         if (!bios_loaded) {
             message = "No BIOS loaded. The Saturn cannot start without one.";
             return;
@@ -1006,6 +952,7 @@ int main(int argc, char **argv)
 
         loaded_title = g.title;
         loaded_path = disc_path;
+        loaded_tree = d->tree;
         loaded_disc_index = discIndex;
         loaded_game_index = gameIndex;
         message = g.multi()
@@ -1097,14 +1044,14 @@ int main(int argc, char **argv)
     };
     {
         const std::string base = asset_base();
-        logo = load_png(ren, (base + "assets/wordmark.png").c_str(),
-                        &logo_w, &logo_h);
-        art_console = load_png(ren, (base + "assets/console.png").c_str(),
-                               &art_console_w, &art_console_h);
+        logo = load_image(ren, (base + "assets/wordmark.png").c_str(),
+                        &logo_w, &logo_h, 1024, true);
+        art_console = load_image(ren, (base + "assets/console.png").c_str(),
+                               &art_console_w, &art_console_h, 640, true);
         for (size_t i = 0; i < sizeof(art_periph) / sizeof(art_periph[0]); ++i) {
             if (!kPeriphArt[i]) continue;
-            art_periph[i].tex = load_png(ren, (base + "assets/" + kPeriphArt[i]).c_str(),
-                                         &art_periph[i].w, &art_periph[i].h);
+            art_periph[i].tex = load_image(ren, (base + "assets/" + kPeriphArt[i]).c_str(),
+                                         &art_periph[i].w, &art_periph[i].h, 320, true);
         }
     }
 
@@ -1143,96 +1090,37 @@ int main(int argc, char **argv)
      * is the thing somebody opened the application to do. */
     Face face = Face::Launch;
     char disc_letter = 0;          /* A-Z strip on the shelf; 0 = everything */
-    /*
-     * Covers where covers can exist, names where they cannot.
-     *
-     * The art comes from RetroMedia, so on a build without that client the
-     * grid can only ever be rows of empty plates -- which is a worse shelf
-     * than a list, not a better one. Still a button either way.
-     */
-    bool shelf_grid = saturn::media_available();
-
-    /* ---- RetroMedia ----
-     *
-     * Signing in buys two things: cover art for anybody, and -- for an
-     * administrator -- discs downloaded straight onto the machine. The whole
-     * client is asynchronous, so nothing here ever blocks the frame: a
-     * media_begin_* call returns at once and the answer turns up in the poll
-     * below, whenever it is ready.
-     */
-    saturn::MediaAccount account;
-    std::vector<saturn::MediaGame> catalogue;      /* what the Downloads page shows */
-    /*
-     * And the whole thing, once, for matching the shelf against.
-     *
-     * The Downloads list is filtered by whatever letter and search are in
-     * force, which makes it useless for answering "is this disc of mine in the
-     * catalogue, and what is its cover?" -- so the full list is fetched once
-     * at sign-in and left alone.
-     */
-    std::map<std::string, saturn::MediaGame> by_key;
-    bool have_full_catalogue = false;
-    std::string media_message, media_email_prefill = saturn::media_last_email();
-    char media_email[128] = {0}, media_pass[128] = {0};
-    char media_search[96] = {0};
-    char media_letter = 0;
-    bool media_busy = false;
-    bool downloads_offered = false;
-    SDL_strlcpy(media_email, media_email_prefill.c_str(), sizeof media_email);
-    if (saturn::media_available()) saturn::media_begin_status();
-
-    /*
-     * Cover art, fetched as it is needed and kept as textures.
-     *
-     * A catalogue of two hundred and fifty titles is two hundred and fifty
-     * requests if you ask for all of them at once, so art is asked for only
-     * for the cards actually on screen, a few at a time, and remembered once
-     * it arrives. `asked` is separate from the texture map on purpose: a title
-     * with no artwork at all must be asked about once and then left alone,
-     * not retried every frame for as long as the page is open.
-     */
+    bool shelf_grid = true;
     struct Art { SDL_Texture *tex = nullptr; int w = 0, h = 0; };
     std::map<std::string, Art> art;
-    std::set<std::string> art_asked;
-    std::map<std::string, std::string> art_pending;   /* slug -> key in flight */
-    int art_in_flight = 0;
-
-    /*
-     * One cover, drawn the same on the shelf and in the catalogue.
-     *
-     * Returns true if the card was clicked. The art request is made here too,
-     * so a card that has never been seen asks for its own picture and one that
-     * has been answered already does not ask again.
-     */
-    auto cover_card = [&](const std::string &slug, const std::string &preview,
-                          const std::string &title, const char *sub,
-                          float card_w, int *budget) -> bool {
-        const float cover_h = card_w *
-            kArtAspect[std::clamp(cfg.machine.art_kind, 0, kArtKinds - 1)];
-        /* Keyed by the picture, not by the game: switching the shelf from
-         * title screens to box scans must ask for something new, and it does
-         * not if both are filed under the slug. */
-        const std::string key = slug + "#" + preview;
-        auto it = art.find(key);
-        if (it == art.end() && budget && *budget > 0 && art_in_flight < 4 &&
-            !slug.empty() && !preview.empty() &&
-            art_asked.find(key) == art_asked.end()) {
-            art_asked.insert(key);
-            art_in_flight++;
-            (*budget)--;
-            art_pending[slug] = key;
-            saturn::media_begin_artwork(slug, preview);
+    unsigned textures_revision = 0;
+    auto game_art = [&](const saturn::Game &game) -> const Art & {
+        if (textures_revision != artwork_revision) {
+            for (auto &kv : art) if (kv.second.tex) SDL_DestroyTexture(kv.second.tex);
+            art.clear();
+            textures_revision = artwork_revision;
         }
+        auto [it, added] = art.try_emplace(game.title);
+        if (added) {
+            const std::string path = artwork.path_for(game, cfg_dir + "artwork-cache");
+            if (!path.empty())
+                it->second.tex = load_image(ren, path.c_str(), &it->second.w, &it->second.h, 512);
+        }
+        return it->second;
+    };
 
+    auto cover_card = [&](const saturn::Game &game, const char *sub, float card_w) -> bool {
+        const float cover_h = card_w * 1.42f;
+        const Art empty;
+        const Art &a = ImGui::IsRectVisible(ImVec2(card_w, cover_h)) ? game_art(game) : empty;
         ImGui::BeginGroup();
         const ImVec2 at = ImGui::GetCursorScreenPos();
         ImGui::Dummy(ImVec2(card_w, cover_h));
         const bool hit = ImGui::IsItemClicked();
         ImDrawList *dl = ImGui::GetWindowDrawList();
-        if (it != art.end() && it->second.tex) {
+        if (a.tex) {
             /* Fitted inside the box, whatever shape the artwork turned out
-             * to be -- the catalogue has both title screens and box scans. */
-            const Art &a = it->second;
+             * to be -- local images may be title screens or box scans. */
             float w = card_w, h = w * (float)a.h / (float)a.w;
             if (h > cover_h) { h = cover_h; w = h * (float)a.w / (float)a.h; }
             dl->AddImage((ImTextureID)(intptr_t)a.tex,
@@ -1250,28 +1138,31 @@ int main(int argc, char **argv)
         /* Two lines for the title, always. Left to wrap freely a long one
          * made its card taller than its neighbours, and a row is as tall as
          * its tallest card, so the whole grid went ragged. */
-        ImGui::BeginChild((std::string("t") + slug + title).c_str(),
+        ImGui::BeginChild((std::string("t") + game.title).c_str(),
                           ImVec2(card_w, ImGui::GetTextLineHeight() * 2.2f));
         ImGui::PushTextWrapPos(card_w);
-        ImGui::TextUnformatted(title.c_str());
+        ImGui::TextUnformatted(game.title.c_str());
         ImGui::PopTextWrapPos();
-        if (ImGui::IsWindowHovered()) ImGui::SetTooltip("%s", title.c_str());
+        if (ImGui::IsWindowHovered()) ImGui::SetTooltip("%s", game.title.c_str());
         ImGui::EndChild();
         if (sub && *sub) TextDim("%s", sub);
         ImGui::EndGroup();
         return hit;
     };
 
-    auto refresh_catalogue = [&] {
-        media_busy = true;
-        const char one[2] = { media_letter, 0 };
-        saturn::media_begin_catalogue(media_search, media_letter ? one : "", true);
-    };
     /* The wizard runs until it is finished once, and can be asked for again
      * from Console. A disc on the command line skips it: somebody who
      * double-clicked a game has answered the only question it asks. */
     bool wizard = !cfg.wizard_done && loaded_game_index < 0;
     int  wstep = 0;
+    for (int i = 1; i < argc; ++i) {
+        const std::string arg = argv[i] ? argv[i] : "";
+        if (arg == "--wizard") wizard = true;
+        if (arg.rfind("--wizard-step=", 0) == 0) {
+            wizard = true;
+            wstep = std::clamp(std::atoi(arg.c_str() + 14), 0, kWizardDemoStep + 1);
+        }
+    }
     bool running_view = loaded_game_index >= 0;   /* given a disc: play it */
     bool show_pause = false;
 
@@ -1452,6 +1343,35 @@ int main(int argc, char **argv)
     char search[96] = {0};
     bool quit = false;
 
+    auto return_to_wizard = [&] {
+        if (!demo_session) return;
+        ymir_bridge_set_presentation_paused(ymir, 1);
+        pad.release_all(pad_sink);
+        save_bram();
+        ymir_bridge_eject_disc(ymir);
+        demo_session = false;
+        demo_tested = true;
+        resolve_saves();
+        if (ymir_bridge_load_internal_backup_memory(ymir, demo_restore_path.c_str(), 1) == YMIR_OK) {
+            // Restore the normal write-through file after leaving the private demo RAM.
+            if (ymir_bridge_save_internal_backup_memory(ymir, bram_path.c_str()) == YMIR_OK)
+                load_bram();
+        } else {
+            load_bram();
+        }
+        rescan();
+        loaded_game_index = -1;
+        loaded_disc_index = 0;
+        loaded_title.clear();
+        loaded_path.clear();
+        loaded_tree.clear();
+        show_pause = false;
+        running_view = false;
+        pointer.seen = false;
+        wizard = true;
+        wstep = kWizardDemoStep;
+    };
+
     while (!quit) {
         /* Read once, at the top: the events below need it too -- a touch
          * arrives in normalised coordinates and has nothing to scale by
@@ -1470,6 +1390,12 @@ int main(int argc, char **argv)
         while (SDL_PollEvent(&ev)) {
             ImGui_ImplSDL3_ProcessEvent(&ev);
             if (ev.type == SDL_EVENT_QUIT) quit = true;
+            if (demo_session && ev.type == SDL_EVENT_KEY_DOWN &&
+                (ev.key.scancode == SDL_SCANCODE_ESCAPE ||
+                 ev.key.scancode == SDL_SCANCODE_AC_BACK)) {
+                return_to_wizard();
+                continue;
+            }
 
             /* ---- the on-screen pad, before the gun and the mouse ----
              * A finger on a drawn button is a button, not a shot; anything
@@ -1774,12 +1700,14 @@ int main(int argc, char **argv)
                                    "the next two screens are about them: a BIOS, and "
                                    "somewhere to keep your discs.");
                 ImGui::Spacing();
-                TextDimWrapped("The emulation is Ymir's work, under the GPL. This app "
-                               "supplies no BIOS and no games.");
+                TextDimWrapped("The emulation is Ymir's work, under the GPL. Supply your own "
+                               "BIOS and discs; the setup wizard includes a homebrew demo.");
             }
 
             else if (wstep == 1) {
-                ImGui::TextWrapped("Where do you keep your disc images?");
+                ImGui::TextWrapped("Choose the parent folder for your Saturn collection.");
+                TextDimWrapped("It contains bios, games, artwork and saves. Existing folders and flat disc libraries are supported.");
+                TextDimWrapped("For artwork, use a PNG or JPEG with the same name as the disc, for example Daytona USA.chd and artwork/Daytona USA.png.");
                 ImGui::Spacing();
 #if defined(__ANDROID__)
                 /*
@@ -1800,9 +1728,9 @@ int main(int argc, char **argv)
                         saturn::saf_pick();
                     ImGui::Spacing();
                     TextDimWrapped("Android will ask you to grant it. Inside it this "
-                                   "app makes three folders and touches nothing else: "
-                                   "bios for your Saturn BIOS, cd for your discs, and "
-                                   "saves for your game saves. Folders already there "
+                                   "app makes four folders and touches nothing else: "
+                                   "bios for your Saturn BIOS, games for your discs, artwork "
+                                   "for your pictures, and saves for progress. Folders already there "
                                    "are left exactly as they are.");
                     ImGui::Spacing();
 
@@ -1820,8 +1748,10 @@ int main(int argc, char **argv)
                             ImGui::TextWrapped("Using %s", t.name.c_str());
                             ImGui::PopStyleColor();
                         } else if (ImGui::Button(t.name.c_str())) {
+                            save_bram();
                             adopt_tree(t.uri);
                             resolve_saves();
+                            load_bram();
                             rescan();
                             adopt_bios_from_discs();
                         }
@@ -1840,11 +1770,11 @@ int main(int argc, char **argv)
                 for (const std::string &r : saturn::candidate_disc_roots()) {
                     ImGui::PushID(r.c_str());
                     if (ImGui::RadioButton("##r", cfg.disc_tree.empty() &&
-                                                  cfg.disc_root == r)) {
-                        cfg.disc_tree.clear();
-                        cfg.disc_root = r;
-                        SDL_CreateDirectory(r.c_str());
+                                                  cfg.parent_root == r)) {
+                        save_bram();
+                        saturn::configure_parent_folder(cfg, r);
                         resolve_saves();
+                        load_bram();
                         rescan();
                         adopt_bios_from_discs();
                         saturn::save_app_config(cfg_path, cfg);
@@ -1854,15 +1784,15 @@ int main(int argc, char **argv)
                     ImGui::PopID();
                 }
 #else
-                TextDimWrapped("One folder of disc images. Not a folder of folders: "
-                               "a Saturn game is a disc.");
+
                 ImGui::Spacing();
                 for (const std::string &r : saturn::candidate_disc_roots()) {
                     ImGui::PushID(r.c_str());
-                    if (ImGui::RadioButton("##r", cfg.disc_root == r)) {
-                        cfg.disc_root = r;
-                        SDL_CreateDirectory(r.c_str());
+                    if (ImGui::RadioButton("##r", cfg.parent_root == r)) {
+                        save_bram();
+                        saturn::configure_parent_folder(cfg, r);
                         resolve_saves();
+                        load_bram();
                         rescan();
                         adopt_bios_from_discs();
                         saturn::save_app_config(cfg_path, cfg);
@@ -1878,8 +1808,10 @@ int main(int argc, char **argv)
                 {
                     std::string got;
                     if (saturn::take_pick(got)) {
-                        cfg.disc_root = got;
+                        save_bram();
+                        saturn::configure_parent_folder(cfg, got);
                         resolve_saves();
+                        load_bram();
                         rescan();
                         adopt_bios_from_discs();
                         saturn::save_app_config(cfg_path, cfg);
@@ -1971,26 +1903,21 @@ int main(int argc, char **argv)
                 }
             }
 
-            else if (wstep == 3) {
+            else if (wstep == kWizardDemoStep) {
                 const std::string demo = saturn::demo_disc_path();
                 ImGui::Spacing();
                 if (demo.empty()) {
-                    /* Not an apology for a missing file: the phone build
-                     * leaves it out on purpose, and saying which build you are
-                     * on is more use than saying something is absent. */
-                    ImGui::TextWrapped("Nothing is bundled to run, so this step is "
-                                       "just to say what happens next.");
-                    ImGui::Spacing();
-                    TextDimWrapped("The demo disc is 83 MB of mostly CD audio and it "
-                                   "would be the whole of this download, so it ships "
-                                   "with the desktop build and not this one. Put your "
-                                   "own discs in the folder from the last step and "
-                                   "they appear on the shelf.");
+                    ImGui::TextWrapped("The bundled demo files are unavailable. "
+                                       "You can continue setup and use your own discs.");
                 } else {
                     ImGui::TextWrapped("A demo is included, so there is something to "
                                        "run before you have copied anything across.");
                     ImGui::Spacing();
                     ImGui::TextUnformatted(saturn::demo_title());
+                    if (demo_tested) {
+                        ImGui::TextColored(ImVec4(0.4f, 0.85f, 0.55f, 1.0f),
+                                           "Demo finished. Continue the wizard or run it again.");
+                    }
                     TextDimWrapped("Free Saturn homebrew from the SegaXtreme "
                                    "competition. Not a Sega game, and not ours "
                                    "either -- it is included with permission as "
@@ -1998,24 +1925,38 @@ int main(int argc, char **argv)
                     ImGui::Spacing();
                     ImGui::BeginDisabled(!bios_loaded);
                     if (ImGui::Button("Run the demo", ImVec2(fs2 * 12.0f, 0))) {
-                        /* Finish first: coming back to step four after the
-                         * emulator exits, with no sign of why, is worse than
-                         * starting again. */
-                        cfg.wizard_done = true;
-                        saturn::save_app_config(cfg_path, cfg);
-                        wizard = false;
-
-                        saturn::Game g;
-                        saturn::Disc d;
-                        d.path = demo;
-                        d.file = "PPPong.cue";
-                        g.title = saturn::demo_title();
-                        g.discs.push_back(d);
-                        games.insert(games.begin(), g);
-                        insert_disc(0, 0);
-                        running_view = loaded_game_index >= 0;
+                        demo_error.clear();
+                        save_bram();
+                        SDL_CreateDirectory(demo_saves_dir.c_str());
+                        const int32_t preserved = ymir_bridge_save_internal_backup_memory(
+                            ymir, demo_restore_path.c_str());
+                        if (!path_is_file(demo_bram_path))
+                            ymir_bridge_save_internal_backup_memory(ymir, demo_bram_path.c_str());
+                        if (preserved == YMIR_OK &&
+                            ymir_bridge_load_internal_backup_memory(ymir, demo_bram_path.c_str(), 0) == YMIR_OK) {
+                            demo_session = true;
+                            states_dir = demo_saves_dir + "/states";
+                            SDL_CreateDirectory(states_dir.c_str());
+                            rescan();
+                            loaded_game_index = -1;
+                            insert_disc(0, 0);
+                            if (loaded_game_index == 0) {
+                                wizard = false;
+                                show_pause = false;
+                                running_view = true;
+                            } else {
+                                return_to_wizard();
+                                demo_tested = false;
+                                demo_error = message;
+                            }
+                        } else {
+                            demo_error = "Could not prepare the demo saves. Check that app storage is writable.";
+                        }
                     }
                     ImGui::EndDisabled();
+                    TextDimWrapped("Return here using the button beside the demo, Escape, or Android Back.");
+                    if (!demo_error.empty())
+                        ImGui::TextColored(ImVec4(1.0f, 0.65f, 0.35f, 1.0f), "%s", demo_error.c_str());
                     if (!bios_loaded) {
                         ImGui::Spacing();
                         TextDimWrapped("It needs the BIOS too. Nothing on a Saturn "
@@ -2029,6 +1970,7 @@ int main(int argc, char **argv)
                 ImGui::Spacing();
                 ImGui::Text("BIOS:  %s", bios_loaded ? "loaded" : "not set");
                 ImGui::Text("Discs: %s", cfg.disc_root.c_str());
+                ImGui::Text("Artwork: %s", cfg.artwork_dir.c_str());
                 ImGui::Text("Found: %zu", games.size());
                 ImGui::Spacing();
                 ImGui::Separator();
@@ -2157,7 +2099,7 @@ int main(int argc, char **argv)
             };
             /* Only the narrow layout uses this, to decide how many buttons
              * fit on a row before it wraps. */
-            const int n_tabs = downloads_offered ? 10 : 9;
+            const int n_tabs = 11;
 
             /* ============ the rail, where there is width for one ============ */
             if (!narrow && !g_pad_fullscreen) {
@@ -2203,7 +2145,6 @@ int main(int argc, char **argv)
                 Entry entries[] = {
                     { "Launch",      "Launch", Face::Launch,    false },
                     { "Discs",       "Discs",  Face::Discs,     false },
-                    { "Downloads",   "Online", Face::Downloads, false },
                     { "Save states", "Saves",  Face::Saves,     false },
                     { "MACHINE",     "MACHINE",Face::Memory,    true  },
                     { "Memory",      "Memory", Face::Memory,    false },
@@ -2216,15 +2157,6 @@ int main(int argc, char **argv)
                     { "Paths",       "Paths",  Face::Paths,     false },
                     { "Setup",       "Setup",  Face::Setup,     false },
                 };
-                /*
-                 * Downloads stays in the rail whether or not it can be used.
-                 *
-                 * It was hidden when there was no client or no administrator
-                 * account, which is indistinguishable from the feature not
-                 * existing -- and on Android, where RetroMedia is not built
-                 * in at all, it simply vanished with no explanation anywhere.
-                 * A page that says why is better than a gap.
-                 */
                 int n_rows = 0, n_head = 0;
                 for (const Entry &e : entries) {
                     if (e.heading) n_head++; else n_rows++;
@@ -2448,15 +2380,26 @@ int main(int argc, char **argv)
                  * than opening something and reading it.
                  */
                 const float sel_h = ImGui::GetFrameHeightWithSpacing();
-                const float ph = std::max(stage_h - ch - sel_h
+                const float half_w = (cwid - ImGui::GetStyle().ItemSpacing.x) * 0.5f;
+                const bool wrap_port_label = ImGui::CalcTextSize("Controller port 1").x > half_w;
+                const float label_h = ImGui::GetTextLineHeightWithSpacing() * (wrap_port_label ? 2.0f : 1.0f);
+                const float ph = std::max(stage_h - ch - sel_h - label_h
                                               - ImGui::GetStyle().ItemSpacing.y,
                                           ImGui::GetFrameHeight() * 0.8f);
-                const float half_w = (cwid - ImGui::GetStyle().ItemSpacing.x) * 0.5f;
                 for (int which = 1; which <= 2; ++which) {
                     saturn::Peripheral &p = (which == 1) ? cfg.machine.port1
                                                          : cfg.machine.port2;
                     if (which == 2) ImGui::SameLine();
                     ImGui::BeginGroup();
+                    char port_label[40];
+                    snprintf(port_label, sizeof port_label,
+                             wrap_port_label ? "Controller\nport %d" : "Controller port %d", which);
+                    const ImVec2 label_at = ImGui::GetCursorScreenPos();
+                    const ImVec2 label_size = ImGui::CalcTextSize(port_label);
+                    ImGui::GetWindowDrawList()->AddText(
+                        ImVec2(label_at.x + std::max(0.0f, (half_w - label_size.x) * 0.5f), label_at.y),
+                        ImGui::GetColorU32(ImGuiCol_Text), port_label);
+                    ImGui::Dummy(ImVec2(half_w, label_h - ImGui::GetStyle().ItemSpacing.y));
                     const ImVec2 at = ImGui::GetCursorScreenPos();
                     ImGui::Dummy(ImVec2(half_w, ph));
                     int aw = 0, ah = 0;
@@ -2557,23 +2500,6 @@ int main(int argc, char **argv)
                      * Launch.
                      */
                     SDL_Texture *disc_tex = nullptr;
-                    if (loaded_game_index >= 0) {
-                        auto m = by_key.find(match_key(games[loaded_game_index].title));
-                        if (m != by_key.end() &&
-                            m->second.media_types.find("cartridges") != std::string::npos) {
-                            const std::string pth = art_path_for_kind(m->second, "cartridges");
-                            const std::string k = m->second.slug + "#" + pth;
-                            auto a = art.find(k);
-                            if (a != art.end()) disc_tex = a->second.tex;
-                            else if (!pth.empty() && art_asked.find(k) == art_asked.end()) {
-                                art_asked.insert(k);
-                                art_pending[m->second.slug] = k;
-                                art_in_flight++;
-                                saturn::media_begin_artwork(m->second.slug, pth);
-                            }
-                        }
-                    }
-
                     if (disc_tex) {
                         dl->AddImage((ImTextureID)(intptr_t)disc_tex,
                                      ImVec2(c.x - r, c.y - r), ImVec2(c.x + r, c.y + r));
@@ -2753,7 +2679,6 @@ int main(int argc, char **argv)
                 };
                 tab("Launch", Face::Launch, bsz);
                 flow("Discs", Face::Discs);
-                flow("Downloads", Face::Downloads);
                 flow("Saves", Face::Saves);
                 flow("Picture", Face::Picture);
                 flow("Touch pad", Face::Input);
@@ -2779,7 +2704,7 @@ int main(int argc, char **argv)
              */
             const float fw = ImGui::GetContentRegionAvail().x;
 
-            if (face == Face::Discs || face == Face::Downloads) {
+            if (face == Face::Discs) {
                 /*
                  * Search is a button, not a field.
                  *
@@ -2790,9 +2715,8 @@ int main(int argc, char **argv)
                  * shelf itself.
                  */
                 {
-                    const bool mine = face == Face::Discs;
                     char label[96];
-                    const char *term = mine ? search : media_search;
+                    const char *term = search;
                     if (term[0]) snprintf(label, sizeof label, "Search: %s  X", term);
                     else         snprintf(label, sizeof label, "Search...");
                     if (ImGui::Button(label, ImVec2(0, fs * 1.9f))) {
@@ -2800,8 +2724,7 @@ int main(int argc, char **argv)
                             /* A second press on a live search clears it: the
                              * way out of a filter should be where the filter
                              * is. */
-                            if (mine) search[0] = 0;
-                            else { media_search[0] = 0; refresh_catalogue(); }
+                            search[0] = 0;
                         } else {
                             ImGui::OpenPopup("Find a game");
                         }
@@ -2817,12 +2740,7 @@ int main(int argc, char **argv)
                         if (ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere(-1);
                         ImGui::Spacing();
                         if (go || ImGui::Button("Search", ImVec2(em * 8.0f, 0))) {
-                            if (mine) {
-                                SDL_strlcpy(search, box, sizeof search);
-                            } else {
-                                SDL_strlcpy(media_search, box, sizeof media_search);
-                                refresh_catalogue();
-                            }
+                            SDL_strlcpy(search, box, sizeof search);
                             box[0] = 0;
                             ImGui::CloseCurrentPopup();
                         }
@@ -2876,15 +2794,6 @@ int main(int argc, char **argv)
                                    "be grouped back together by its name. Paths is "
                                    "where that folder is set.");
                 } else if (shelf_grid) {
-                    /*
-                     * The shelf as covers.
-                     *
-                     * The pictures are the catalogue's, matched to the discs
-                     * by a normalised title -- so a signed-in account gets
-                     * artwork for games it already owns without downloading
-                     * anything. Without a match the card is a plate with the
-                     * name on it, which is still a shelf.
-                     */
                     ImGui::BeginChild("##shelf");
                     /*
                      * Sized to fit a sensible number across, not to a fixed
@@ -2900,7 +2809,6 @@ int main(int argc, char **argv)
                                                     em * 5.0f, em * 9.0f);
                     const float step = card_w + ImGui::GetStyle().ItemSpacing.x;
                     const int per_row = std::max(1, (int)(wide_area / step));
-                    int budget = 3;
                     int shown = 0;
                     for (size_t i = 0; i < games.size(); ++i) {
                         const saturn::Game &g = games[i];
@@ -2912,19 +2820,11 @@ int main(int argc, char **argv)
                         shown++;
                         ImGui::PushID((int)i);
 
-                        std::string slug, preview;
-                        auto m = by_key.find(match_key(g.title));
-                        if (m != by_key.end()) {
-                            slug = m->second.slug;
-                            preview = art_path_for(m->second, cfg.machine.art_kind);
-                        }
-
                         char sub[48];
                         if (g.multi()) snprintf(sub, sizeof sub, "%zu discs", g.discs.size());
                         else           snprintf(sub, sizeof sub, "%s",
                                                 (int)i == loaded_game_index ? "in the drive" : "");
-                        if (cover_card(slug.empty() ? g.title : slug, preview,
-                                       g.title, sub, card_w, &budget)) {
+                        if (cover_card(g, sub, card_w)) {
                             insert_disc((int)i, 0);
                             /* Straight to the machine: choosing a disc and
                              * then having to find the way to the button that
@@ -2959,126 +2859,6 @@ int main(int argc, char **argv)
                     }
                     ImGui::EndChild();
                 }
-            }
-
-            else if (face == Face::Downloads && !downloads_offered) {
-                /*
-                 * Present but not usable, and it says which.
-                 *
-                 * Hiding the entry made the feature look as though it did not
-                 * exist -- especially on Android, where the client is not
-                 * compiled in at all and there was nothing anywhere to say so.
-                 */
-                ImGui::Spacing();
-                ImGui::TextUnformatted("Downloads");
-                ImGui::Spacing();
-                if (!saturn::media_available()) {
-                    TextDimWrapped("The RetroMedia client is not built into this "
-                                   "version. It needs libcurl, which this build does "
-                                   "not have -- the desktop build does, and downloads "
-                                   "work there.");
-                } else if (!account.signed_in) {
-                    TextDimWrapped("Sign in on the Setup page first. An account at "
-                                   "media.crownparkcomputing.com -- an ordinary email "
-                                   "and password.");
-                } else if (!account.is_admin) {
-                    TextDimWrappedF("Signed in as %s. Downloading discs needs an "
-                                    "administrator account; cover art does not, and "
-                                    "is already working.", account.email.c_str());
-                } else if (!saturn::media_downloads_available()) {
-                    TextDimWrapped("Downloads are not offered on this platform.");
-                }
-            }
-
-            else if (face == Face::Downloads) {
-                ImGui::Spacing();
-                TextDim("%s   %d credit%s, %d free left", account.email.c_str(),
-                        account.credits, account.credits == 1 ? "" : "s",
-                        account.free_remaining);
-                ImGui::SameLine(fw - fs * 7.0f);
-                if (ImGui::Button("Sign out")) {
-                    saturn::media_begin_logout();
-                    catalogue.clear();
-                }
-
-                ImGui::Spacing();
-                if (ImGui::Button("Refresh")) {
-                    /* Forget the art as well as the list: a cover that failed
-                     * once is otherwise never asked for again. */
-                    for (auto &kv : art) if (kv.second.tex) SDL_DestroyTexture(kv.second.tex);
-                    art.clear();
-                    art_asked.clear();
-                    art_in_flight = 0;
-                    refresh_catalogue();
-                }
-                ImGui::SameLine();
-                TextDim(media_busy ? "working..." : "%zu title%s", catalogue.size(),
-                        catalogue.size() == 1 ? "" : "s");
-
-                /*
-                 * The whole alphabet here, not only the letters in view.
-                 *
-                 * The shelf offers the initials it has, because it has the
-                 * whole shelf in front of it. The catalogue is on the other
-                 * end of a network and is paged, so what is on this page says
-                 * nothing about what exists -- pressing S has to be able to
-                 * ask the server for S.
-                 */
-                ImGui::Spacing();
-                {
-                    std::string all = "#";
-                    for (char c = 'A'; c <= 'Z'; ++c) all.push_back(c);
-                    if (letter_strip(all, media_letter, fw)) refresh_catalogue();
-                }
-
-                ImGui::Spacing();
-                ImGui::Separator();
-                const std::string prog = saturn::media_progress();
-                if (!prog.empty()) {
-                    ImGui::TextUnformatted(prog.c_str());
-                } else if (!media_message.empty()) {
-                    TextDim("%s", media_message.c_str());
-                }
-
-                /*
-                 * A grid of covers, not a list of lines.
-                 *
-                 * Two hundred and fifty rows of text is a spreadsheet, and
-                 * nobody recognises a game from its name in a column. The
-                 * cards are sized off the text so they grow with the font and
-                 * the display, and the art is asked for lazily as they come
-                 * into view.
-                 */
-                ImGui::BeginChild("##dl");
-                {
-                    const float wide_area = ImGui::GetContentRegionAvail().x;
-                    const float card_w = std::clamp(wide_area / 6.0f,
-                                                    em * 5.0f, em * 9.0f);
-                    const float step = card_w + ImGui::GetStyle().ItemSpacing.x;
-                    const int per_row = std::max(1, (int)(wide_area / step));
-                    int budget = 3;          /* new art requests this frame */
-
-                    for (size_t i = 0; i < catalogue.size(); ++i) {
-                        const saturn::MediaGame &g = catalogue[i];
-                        if ((int)(i % per_row) != 0) ImGui::SameLine();
-                        ImGui::PushID((int)i);
-                        char sub[32];
-                        if (g.bytes > 0) snprintf(sub, sizeof sub, "%.0f MB",
-                                                  (double)g.bytes / 1048576.0);
-                        else             snprintf(sub, sizeof sub, "%d file%s",
-                                                  g.rom_files, g.rom_files == 1 ? "" : "s");
-                        ImGui::BeginGroup();
-                        cover_card(g.slug, art_path_for(g, cfg.machine.art_kind),
-                                   g.title, sub, card_w, &budget);
-                        ImGui::BeginDisabled(!prog.empty() || cfg.disc_root.empty());
-                        if (ImGui::Button("Download", ImVec2(card_w, 0)))
-                            saturn::media_begin_download(g.slug, cfg.disc_root);
-                        ImGui::EndDisabled();
-                        ImGui::EndGroup();
-                        ImGui::PopID();
-                    }
-                }
-                ImGui::EndChild();
             }
 
             else if (face == Face::Memory) {
@@ -3416,165 +3196,114 @@ int main(int argc, char **argv)
 
                 {
                     if (face == Face::Paths) {
-                        /* Three paths and the buttons that set them. The
-                         * reasoning that used to be printed under each one is
-                         * in the tooltips and in the wizard, which is where
-                         * somebody meets these for the first time. */
-                        auto why = [&](const char *text) {
-                            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", text);
-                        };
-
-                        ImGui::Spacing();
-                        col_begin("##pathcols");
-
-                        ImGui::TextUnformatted("BIOS");
-                        static char bios_buf[1024];
+                        static char parent_buf[1024] = {};
+                        static char bios_buf[1024] = {};
+                        static char saves_buf[1024] = {};
                         static bool primed = false;
-                        if (!primed) { SDL_strlcpy(bios_buf, cfg.bios_path.c_str(),
-                                                   sizeof bios_buf); primed = true; }
+                        if (!primed) {
+                            SDL_strlcpy(parent_buf, cfg.parent_root.c_str(), sizeof parent_buf);
+                            SDL_strlcpy(bios_buf, cfg.bios_path.c_str(), sizeof bios_buf);
+                            SDL_strlcpy(saves_buf, cfg.saves_dir.c_str(), sizeof saves_buf);
+                            primed = true;
+                        }
+                        auto use_parent = [&](const std::string &root) {
+                            save_bram();
+                            saturn::configure_parent_folder(cfg, root);
+                            resolve_saves();
+                            load_bram();
+                            rescan();
+                            adopt_bios_from_discs();
+                            SDL_strlcpy(parent_buf, cfg.parent_root.c_str(), sizeof parent_buf);
+                            SDL_strlcpy(bios_buf, cfg.bios_path.c_str(), sizeof bios_buf);
+                            SDL_strlcpy(saves_buf, cfg.saves_dir.c_str(), sizeof saves_buf);
+                            saturn::save_app_config(cfg_path, cfg);
+                        };
+                        col_begin("##pathcols");
+                        ImGui::TextUnformatted("Parent folder");
                         ImGui::SetNextItemWidth(-FLT_MIN);
-                        if (ImGui::InputText("##bios", bios_buf, sizeof bios_buf)) {
+                        if (ImGui::InputText("##parent", parent_buf, sizeof parent_buf,
+                                             ImGuiInputTextFlags_EnterReturnsTrue))
+                            use_parent(parent_buf);
+                        TextDimWrapped("Contains bios, games, artwork and saves. Existing folder names and flat disc libraries are supported.");
+                        if (saturn::pickers_usable()) {
+                            ImGui::BeginDisabled(saturn::pick_in_progress());
+                            if (ImGui::Button("Choose parent folder...")) saturn::begin_pick_folder();
+                            ImGui::EndDisabled();
+                        } else if (saturn::saf_available()) {
+                            if (ImGui::Button("Choose parent folder...")) saturn::saf_pick();
+                            for (const saturn::SafTree &tree : saturn::saf_trees()) {
+                                ImGui::PushID(tree.uri.c_str());
+                                if (tree.uri == cfg.disc_tree || (!tree.path.empty() && tree.path == cfg.parent_root))
+                                    TextDimWrappedF("Using %s", tree.name.c_str());
+                                else if (ImGui::Button(tree.name.c_str())) {
+                                    save_bram();
+                                    adopt_tree(tree.uri);
+                                    resolve_saves();
+                                    load_bram();
+                                    rescan();
+                                    adopt_bios_from_discs();
+                                    SDL_strlcpy(parent_buf, cfg.parent_root.c_str(), sizeof parent_buf);
+                                    SDL_strlcpy(bios_buf, cfg.bios_path.c_str(), sizeof bios_buf);
+                                    SDL_strlcpy(saves_buf, cfg.saves_dir.c_str(), sizeof saves_buf);
+                                }
+                                ImGui::PopID();
+                            }
+                        }
+                        ImGui::Spacing();
+                        ImGui::TextUnformatted("BIOS");
+                        ImGui::SetNextItemWidth(-FLT_MIN);
+                        if (ImGui::InputText("##bios", bios_buf, sizeof bios_buf,
+                                             ImGuiInputTextFlags_EnterReturnsTrue)) {
                             cfg.bios_path = bios_buf;
                             load_bios();
                             saturn::save_app_config(cfg_path, cfg);
                         }
-                        why("512 KB, dumped from a console you own. This app does not "
-                            "include one.");
                         if (saturn::pickers_usable()) {
                             ImGui::BeginDisabled(saturn::pick_in_progress());
-                            if (ImGui::Button("Browse...")) saturn::begin_pick_file();
+                            if (ImGui::Button("Browse BIOS...")) saturn::begin_pick_file();
                             ImGui::EndDisabled();
                         } else if (ImGui::Button("Find the BIOS")) {
                             adopt_bios_from_discs();
                             SDL_strlcpy(bios_buf, cfg.bios_path.c_str(), sizeof bios_buf);
                         }
                         ImGui::SameLine();
-                        if (bios_loaded) {
-                            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.55f, 0.85f, 0.55f, 1.0f));
-                            ImGui::TextUnformatted("loaded");
-                        } else {
-                            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.75f, 0.3f, 1.0f));
-                            ImGui::TextUnformatted(cfg.bios_path.empty() ? "not set"
-                                                                         : "not readable");
-                        }
-                        ImGui::PopStyleColor();
-
-                        ImGui::Spacing();
-                        ImGui::TextUnformatted("Discs");
-                        static char root_buf[1024];
-                        static bool root_primed = false;
-                        if (!root_primed) { SDL_strlcpy(root_buf, cfg.disc_root.c_str(),
-                                                        sizeof root_buf); root_primed = true; }
-                        ImGui::SetNextItemWidth(-FLT_MIN);
-                        if (ImGui::InputText("##root", root_buf, sizeof root_buf)) {
-                            cfg.disc_root = root_buf;
-                            saturn::save_app_config(cfg_path, cfg);
-                            rescan();
-                        }
-                        why("One folder of disc images. Not a folder of folders: a "
-                            "Saturn game is a disc.");
-                        if (saturn::pickers_usable()) {
-                            ImGui::BeginDisabled(saturn::pick_in_progress());
-                            if (ImGui::Button("Browse...##root")) saturn::begin_pick_folder();
-                            ImGui::EndDisabled();
-                        } else if (saturn::saf_available()) {
-                            if (ImGui::Button("Choose a folder...")) saturn::saf_pick();
-                            for (const saturn::SafTree &t : saturn::saf_trees()) {
-                                ImGui::PushID(t.uri.c_str());
-                                const bool in_use = t.uri == cfg.disc_tree ||
-                                    (!t.path.empty() && !cfg.disc_root.empty() &&
-                                     cfg.disc_root.rfind(t.path, 0) == 0);
-                                if (in_use) TextDimWrappedF("using %s", t.name.c_str());
-                                else if (ImGui::Button(t.name.c_str())) {
-                                    adopt_tree(t.uri);
-                                    SDL_strlcpy(root_buf, cfg.disc_root.c_str(), sizeof root_buf);
-                                    resolve_saves();
-                                    rescan();
-                                    adopt_bios_from_discs();
-                                    SDL_strlcpy(bios_buf, cfg.bios_path.c_str(), sizeof bios_buf);
-                                }
-                                ImGui::PopID();
-                            }
-                        }
-                        {   /* Whichever dialog was opened, its answer lands here. */
-                            std::string got;
-                            if (saturn::take_pick(got)) {
-                                SDL_PathInfo info;
-                                if (SDL_GetPathInfo(got.c_str(), &info) &&
-                                    info.type == SDL_PATHTYPE_DIRECTORY) {
-                                    cfg.disc_root = got;
-                                    SDL_strlcpy(root_buf, got.c_str(), sizeof root_buf);
-                                    resolve_saves();
-                                    rescan();
-                                } else {
-                                    cfg.bios_path = got;
-                                    SDL_strlcpy(bios_buf, got.c_str(), sizeof bios_buf);
-                                    load_bios();
-                                }
+                        TextDim(bios_loaded ? "Loaded" : "Not loaded");
+                        std::string picked;
+                        if (saturn::take_pick(picked)) {
+                            SDL_PathInfo info;
+                            if (SDL_GetPathInfo(picked.c_str(), &info) && info.type == SDL_PATHTYPE_DIRECTORY)
+                                use_parent(picked);
+                            else {
+                                cfg.bios_path = picked;
+                                SDL_strlcpy(bios_buf, picked.c_str(), sizeof bios_buf);
+                                load_bios();
                                 saturn::save_app_config(cfg_path, cfg);
                             }
                         }
 
                         col_next();
-
+                        ImGui::TextUnformatted("Artwork");
+                        TextDimWrappedF("%s", cfg.disc_tree.empty() ? cfg.artwork_dir.c_str()
+                            : saturn::saf_folder_name(cfg.disc_tree, "artwork").c_str());
+                        TextDimWrapped("Place PNG or JPEG images here with the same name as the disc. For example: Daytona USA.chd uses Daytona USA.png. A multi-disc game can use its shared title.");
+                        if (ImGui::Button("Refresh artwork and library")) rescan();
+                        ImGui::Spacing();
+                        ImGui::TextUnformatted("Discs");
+                        TextDimWrappedF("%zu games in %s", games.size(), cfg.disc_tree.empty()
+                            ? cfg.disc_root.c_str() : saturn::saf_folder_name(cfg.disc_tree, "cd").c_str());
+                        if (ImGui::Button(shelf_grid ? "Show as a list" : "Show the covers")) shelf_grid = !shelf_grid;
+                        ImGui::Spacing();
                         ImGui::TextUnformatted("Saves");
-                        static char saves_buf[1024];
-                        static bool saves_primed = false;
-                        if (!saves_primed) { SDL_strlcpy(saves_buf, cfg.saves_dir.c_str(),
-                                                         sizeof saves_buf); saves_primed = true; }
                         ImGui::SetNextItemWidth(-FLT_MIN);
-                        if (ImGui::InputText("##saves", saves_buf, sizeof saves_buf)) {
-                            cfg.saves_dir = saves_buf;
-                            saturn::save_app_config(cfg_path, cfg);
+                        if (ImGui::InputText("##saves", saves_buf, sizeof saves_buf,
+                                             ImGuiInputTextFlags_EnterReturnsTrue)) {
                             save_bram();
+                            cfg.saves_dir = saves_buf;
                             resolve_saves();
                             load_bram();
+                            saturn::save_app_config(cfg_path, cfg);
                         }
-                        why("The Saturn's battery memory and the save states. Kept "
-                            "outside the app, because anything inside it goes when the "
-                            "app is uninstalled. Empty means beside the discs.");
-                        TextDim("%s", saves_dir.c_str());
-
-                        /*
-                         * The library, described and rebuilt from here.
-                         *
-                         * These were above the shelf on the Discs page, where
-                         * they were in the way of the thing the page is for.
-                         * They belong with the folder they read: how many
-                         * discs were found in it, a button to look again, and
-                         * how the shelf should draw them.
-                         */
-                        ImGui::Spacing();
-                        ImGui::Separator();
-                        ImGui::Spacing();
-                        ImGui::TextUnformatted("Library");
-                        TextDimWrappedF("%zu game%s in %s", games.size(),
-                                        games.size() == 1 ? "" : "s",
-                                        !cfg.disc_tree.empty()
-                                            ? saturn::saf_folder_name(cfg.disc_tree, "cd").c_str()
-                                        : cfg.disc_root.empty() ? "(no folder set)"
-                                                                : cfg.disc_root.c_str());
-                        if (ImGui::Button("Rescan")) rescan();
-                        ImGui::SameLine();
-                        if (ImGui::Button(shelf_grid ? "Show as a list"
-                                                     : "Show the covers"))
-                            shelf_grid = !shelf_grid;
-                        if (shelf_grid) {
-                            ImGui::SetNextItemWidth(-FLT_MIN);
-                            if (ImGui::BeginCombo("##artkind",
-                                                  kArtLabel[std::clamp(cfg.machine.art_kind,
-                                                                       0, kArtKinds - 1)])) {
-                                for (int k = 0; k < kArtKinds; ++k)
-                                    if (ImGui::Selectable(kArtLabel[k],
-                                                          cfg.machine.art_kind == k)) {
-                                        cfg.machine.art_kind = k;
-                                        saturn::save_app_config(cfg_path, cfg);
-                                    }
-                                ImGui::EndCombo();
-                            }
-                            why("Which picture the catalogue has of a game goes on "
-                                "its card.");
-                        }
+                        TextDimWrappedF("%s", saves_dir.c_str());
                         col_end();
                     }
 
@@ -3582,70 +3311,7 @@ int main(int argc, char **argv)
                         ImGui::Spacing();
                         col_begin("##setupcols");
                         
-                        ImGui::TextUnformatted("RetroMedia");
-                        if (!saturn::media_available()) {
-                            TextDimWrapped("Not built into this version.");
-                        } else if (account.signed_in) {
-                            TextDim("Signed in as %s%s", account.email.c_str(),
-                                    account.is_admin ? " (administrator)" : "");
-                            TextDimWrapped(account.is_admin
-                                ? "The Downloads tab is yours."
-                                : "Cover art only -- downloading discs needs an "
-                                  "administrator account.");
-                            if (ImGui::Button("Sign out##setup")) {
-                                saturn::media_begin_logout();
-                                catalogue.clear();
-                            }
-                        } else {
-                            TextDimWrapped("An account at "
-                                           "media.crownparkcomputing.com. An ordinary "
-                                           "email and password -- there is no Google "
-                                           "account involved.");
-                            ImGui::SetNextItemWidth(-FLT_MIN);
-                            ImGui::InputTextWithHint("##email", "email",
-                                                     media_email, sizeof media_email);
-                            ImGui::SetNextItemWidth(
-                                two_col ? -(ImGui::CalcTextSize("Sign in").x +
-                                            ImGui::GetStyle().FramePadding.x * 2.0f +
-                                            ImGui::GetStyle().ItemSpacing.x)
-                                        : fw * 0.42f);
-                            const bool enter = ImGui::InputTextWithHint(
-                                "##pass", "password", media_pass, sizeof media_pass,
-                                ImGuiInputTextFlags_Password |
-                                ImGuiInputTextFlags_EnterReturnsTrue);
-                            ImGui::SameLine();
-                            ImGui::BeginDisabled(media_busy || !media_email[0] ||
-                                                 !media_pass[0]);
-                            const bool go = ImGui::Button("Sign in");
-                            ImGui::EndDisabled();
-                            if ((enter || go) && media_email[0] && media_pass[0]) {
-                                media_busy = true;
-                                saturn::media_begin_login(media_email, media_pass);
-                                /* The password leaves this buffer the moment the
-                                 * request has it, and again when the answer
-                                 * arrives. It is never written anywhere. */
-                                SDL_memset(media_pass, 0, sizeof media_pass);
-                            }
-                        }
-                        if (!media_message.empty()) TextDim("%s", media_message.c_str());
-                        ImGui::Spacing(); ImGui::Separator(); ImGui::Spacing();
                         if (ImGui::Button("Run setup again")) { wizard = true; wstep = 0; }
-                        ImGui::SameLine();
-                        {
-                            const std::string demo = saturn::demo_disc_path();
-                            ImGui::BeginDisabled(demo.empty() || !bios_loaded);
-                            if (ImGui::Button("Run the demo")) {
-                                saturn::Game g;
-                                saturn::Disc d;
-                                d.path = demo; d.file = "PPPong.cue";
-                                g.title = saturn::demo_title();
-                                g.discs.push_back(d);
-                                games.insert(games.begin(), g);
-                                insert_disc(0, 0);
-                                running_view = loaded_game_index >= 0;
-                            }
-                            ImGui::EndDisabled();
-                        }
                         col_end();
                     }
 
@@ -3974,9 +3640,9 @@ int main(int argc, char **argv)
                  * than by reading a submodule pointer. */
                 TextDim("%s, refreshed %s", SATURN_CORE_DESC, SATURN_CORE_DATE);
                 ImGui::Spacing();
-                TextDimWrapped("github.com/StrikerX3/Ymir -- GNU GPL v3 or later. The "
-                               "exact source this ships is at "
-                               "github.com/CrownParkComputing/ymir.");
+                TextDimWrapped("github.com/ymir-emu/Ymir -- GNU GPL v3 or later. The "
+                               "app source and pinned core are at "
+                               "github.com/CrownParkComputing/Retro-Saturn.");
                 ImGui::Spacing();
                 TextDimWrapped("SDL3: zlib. Dear ImGui: MIT.");
                 ImGui::Spacing();
@@ -3996,6 +3662,18 @@ int main(int argc, char **argv)
         /* ---- the emulator, filling the window ---- */
         else {
             SDL_SetRenderDrawColor(ren, 0, 0, 0, 255);
+
+            if (demo_session && !show_pause) {
+                ImGui::SetNextWindowPos(ImVec2((float)win_w - 12.0f, win_h * 0.5f),
+                                       ImGuiCond_Always, ImVec2(1.0f, 0.5f));
+                ImGui::Begin("##demo_return", nullptr,
+                    ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoMove |
+                    ImGuiWindowFlags_NoResize | ImGuiWindowFlags_AlwaysAutoResize |
+                    ImGuiWindowFlags_NoSavedSettings);
+                if (ImGui::Button("Return to\nwizard", ImVec2(0, ImGui::GetFontSize() * 3.2f)))
+                    return_to_wizard();
+                ImGui::End();
+            }
 
             if (show_pause) {
                 ImGui::SetNextWindowPos(ImVec2(win_w * 0.5f, win_h * 0.5f),
@@ -4091,15 +3769,18 @@ int main(int argc, char **argv)
                 }
 
                 ImGui::Separator();
-                if (ImGui::Button("Back to the shelf", bw)) {
+                if (ImGui::Button(demo_session ? "Return to wizard" : "Back to the shelf", bw)) {
                     /* Written here too, not only at exit: an app that is
                      * force-quit should not forget the clock -- or, far
                      * worse, an afternoon of somebody's progress. */
-                    ymir_bridge_save_smpc_state(ymir, smpc_path.c_str());
-                    save_bram();
-                    pointer.seen = false;   /* no sight waiting on the shelf */
-                    running_view = false;
-                    show_pause = false;
+                    if (demo_session) return_to_wizard();
+                    else {
+                        ymir_bridge_save_smpc_state(ymir, smpc_path.c_str());
+                        save_bram();
+                        pointer.seen = false;
+                        running_view = false;
+                        show_pause = false;
+                    }
                 }
                 ImGui::End();
             }
@@ -4193,70 +3874,6 @@ int main(int argc, char **argv)
                 hidden = aiming;
                 if (aiming) SDL_HideCursor(); else SDL_ShowCursor();
             }
-        }
-
-        /* ---- whatever RetroMedia has finished ---- */
-        {
-            saturn::MediaResult mr;
-            while (saturn::media_poll(mr)) {
-                media_busy = false;
-                if (!mr.message.empty()) media_message = mr.message;
-                switch (mr.op) {
-                case saturn::MediaOp::Status:
-                case saturn::MediaOp::Login:
-                case saturn::MediaOp::Logout:
-                    account = mr.account;
-                    /* The password is not kept a moment longer than the
-                     * request that used it. */
-                    SDL_memset(media_pass, 0, sizeof media_pass);
-                    /* Cover art is free and unmetered for any signed-in
-                     * account; only downloading needs an administrator. So the
-                     * catalogue is fetched for anybody who signs in. */
-                    if (account.signed_in)
-                        saturn::media_begin_catalogue("", "", account.is_admin);
-                    break;
-                case saturn::MediaOp::Catalogue:
-                    if (mr.ok) {
-                        catalogue = mr.games;
-                        /* The first, unfiltered answer is the one worth
-                         * keeping for the shelf. */
-                        if (!have_full_catalogue) {
-                            have_full_catalogue = true;
-                            for (const saturn::MediaGame &g : mr.games)
-                                by_key[match_key(g.title)] = g;
-                        }
-                    }
-                    break;
-                case saturn::MediaOp::Artwork: {
-                    if (art_in_flight > 0) art_in_flight--;
-                    if (!mr.ok) break;
-                    /* The reply names the game; which picture it was comes
-                     * back in the path we asked with. */
-                    int w = 0, h = 0;
-                    std::vector<unsigned char> rgba;
-                    if (!saturn::media_read_art(mr.art.path, w, h, rgba)) break;
-                    SDL_Texture *t = SDL_CreateTexture(ren, SDL_PIXELFORMAT_ABGR8888,
-                                                       SDL_TEXTUREACCESS_STATIC, w, h);
-                    if (!t) break;
-                    SDL_SetTextureBlendMode(t, SDL_BLENDMODE_BLEND);
-                    SDL_SetTextureScaleMode(t, SDL_SCALEMODE_LINEAR);
-                    SDL_UpdateTexture(t, nullptr, rgba.data(), w * 4);
-                    Art &a = art[art_pending.count(mr.art.slug)
-                                 ? art_pending[mr.art.slug] : mr.art.slug];
-                    if (a.tex) SDL_DestroyTexture(a.tex);
-                    a.tex = t; a.w = w; a.h = h;
-                    break;
-                }
-                case saturn::MediaOp::Download:
-                    if (mr.ok) rescan();      /* it is a disc on the shelf now */
-                    break;
-                default: break;
-                }
-            }
-            downloads_offered = saturn::media_available() &&
-                                saturn::media_downloads_available() &&
-                                account.signed_in && account.is_admin;
-
         }
 
         /* One place decides whether the Saturn is running, and it is the only

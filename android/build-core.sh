@@ -9,7 +9,7 @@
 # Android build never shares a configured tree with the host build.
 #
 # The one structural difference is that ymir is CMake, so the core needs no
-# private source tree -- core/retro/android/CMakeLists.txt already builds
+# private source tree -- native/core/android/CMakeLists.txt already builds
 # libymircore.so for the NDK and this simply drives it.
 set -euo pipefail
 
@@ -17,7 +17,7 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 APP="$(cd "$HERE/.." && pwd)"
 CORE="$APP/core"
 
-[ -f "$CORE/retro/bridge/ymir_bridge.h" ] || {
+[ -f "$APP/native/core/bridge/ymir_bridge.h" ] || {
     echo "error: the core is missing at $CORE" >&2
     echo "       run: git submodule update --init --recursive" >&2
     exit 1; }
@@ -77,84 +77,13 @@ fi
 echo "==> SDL3: $SDL3_PREFIX/lib/libSDL3.so"
 
 # ---------------------------------------------------------------------------
-# 1b. libcurl, and a TLS stack for it
-# ---------------------------------------------------------------------------
-# RetroMedia is HTTPS, so Android needs both. mbedTLS rather than OpenSSL
-# because it is a few hundred kilobytes and builds in under a minute with
-# plain CMake, where OpenSSL wants Perl, its own Configure and ten times the
-# time for a client that makes half a dozen kinds of request.
-#
-# zlib comes from the NDK sysroot -- Android has always shipped libz -- but
-# minizip does not, so the two files that read a zip are compiled from zlib's
-# own contrib directory alongside the frontend.
-MBEDTLS_TAG="${MBEDTLS_TAG:-v3.6.2}"
-CURL_TAG="${CURL_TAG:-curl-8_11_1}"
-ZLIB_TAG="${ZLIB_TAG:-v1.3.1}"
-MBEDTLS_SRC="$HERE/build/mbedtls"
-CURL_SRC="$HERE/build/curl"
-ZLIB_SRC="$HERE/build/zlib"
-MBEDTLS_PREFIX="$OUT/mbedtls"
-CURL_PREFIX="$OUT/curl"
-
-if [ ! -f "$MBEDTLS_PREFIX/lib/libmbedtls.a" ]; then
-    echo "==> mbedTLS ($MBEDTLS_TAG)"
-    [ -d "$MBEDTLS_SRC" ] || git clone --depth 1 --branch "$MBEDTLS_TAG" \
-        --recurse-submodules https://github.com/Mbed-TLS/mbedtls.git "$MBEDTLS_SRC"
-    cmake -S "$MBEDTLS_SRC" -B "$OUT/mbedtls-build" -G Ninja \
-        -DCMAKE_TOOLCHAIN_FILE="$ANDROID_NDK/build/cmake/android.toolchain.cmake" \
-        -DANDROID_ABI="$ANDROID_ABI" -DANDROID_PLATFORM="android-$ANDROID_API" \
-        -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$MBEDTLS_PREFIX" \
-        -DENABLE_TESTING=OFF -DENABLE_PROGRAMS=OFF -DUSE_SHARED_MBEDTLS_LIBRARY=OFF \
-        >/dev/null
-    cmake --build "$OUT/mbedtls-build" -j"$JOBS" >/dev/null
-    cmake --install "$OUT/mbedtls-build" >/dev/null
-fi
-
-# Built, not installed: with the command-line tool and its manual switched off,
-# curl's install step still tries to copy man pages that were never generated
-# and fails. The archive and the headers are where they are.
-CURL_LIB="$OUT/curl-build/lib/libcurl.a"
-CURL_INC="$CURL_SRC/include"
-if [ ! -f "$CURL_LIB" ]; then
-    echo "==> libcurl ($CURL_TAG)"
-    [ -d "$CURL_SRC" ] || git clone --depth 1 --branch "$CURL_TAG" \
-        https://github.com/curl/curl.git "$CURL_SRC"
-    # Only what the client uses. Every protocol left in is code that ships and
-    # attack surface that does not need to be there.
-    cmake -S "$CURL_SRC" -B "$OUT/curl-build" -G Ninja \
-        -DCMAKE_TOOLCHAIN_FILE="$ANDROID_NDK/build/cmake/android.toolchain.cmake" \
-        -DANDROID_ABI="$ANDROID_ABI" -DANDROID_PLATFORM="android-$ANDROID_API" \
-        -DCMAKE_BUILD_TYPE=Release \
-        -DBUILD_SHARED_LIBS=OFF -DBUILD_CURL_EXE=OFF -DBUILD_TESTING=OFF \
-        -DCURL_USE_MBEDTLS=ON -DCURL_USE_OPENSSL=OFF -DCURL_USE_LIBPSL=OFF \
-        -DMBEDTLS_INCLUDE_DIR="$MBEDTLS_PREFIX/include" \
-        -DMBEDTLS_LIBRARY="$MBEDTLS_PREFIX/lib/libmbedtls.a" \
-        -DMBEDX509_LIBRARY="$MBEDTLS_PREFIX/lib/libmbedx509.a" \
-        -DMBEDCRYPTO_LIBRARY="$MBEDTLS_PREFIX/lib/libmbedcrypto.a" \
-        -DCURL_ZLIB=ON -DCURL_BROTLI=OFF -DCURL_ZSTD=OFF \
-        -DHTTP_ONLY=ON -DCURL_DISABLE_LDAP=ON \
-        -DUSE_LIBIDN2=OFF -DUSE_NGHTTP2=OFF -DCURL_USE_LIBSSH2=OFF \
-        -DCURL_CA_BUNDLE=none -DCURL_CA_PATH="/system/etc/security/cacerts" \
-        >/dev/null
-    cmake --build "$OUT/curl-build" -j"$JOBS" >/dev/null
-fi
-[ -f "$CURL_LIB" ] || { echo "error: libcurl.a was not built" >&2; exit 1; }
-
-# minizip, from zlib's contrib. Two files, and the only part of zlib that is
-# not already in the sysroot.
-if [ ! -d "$ZLIB_SRC" ]; then
-    echo "==> zlib ($ZLIB_TAG), for contrib/minizip"
-    git clone --depth 1 --branch "$ZLIB_TAG" https://github.com/madler/zlib.git "$ZLIB_SRC"
-fi
-
-# ---------------------------------------------------------------------------
 # 2. The Saturn core and its bridge
 # ---------------------------------------------------------------------------
 # CMAKE_DISABLE_FIND_PACKAGE_Vulkan for the same reason the desktop build sets
 # it: upstream's own SDL3 GUI wants a SPIR-V compiler that is not needed here,
 # and its absence is a FATAL_ERROR rather than a skipped target.
 echo "==> the Saturn core"
-cmake -S "$CORE/retro/android" -B "$OUT/core" -G Ninja \
+cmake -S "$APP/native/core/android" -B "$OUT/core" -G Ninja \
     -DCMAKE_TOOLCHAIN_FILE="$ANDROID_NDK/build/cmake/android.toolchain.cmake" \
     -DANDROID_ABI="$ANDROID_ABI" \
     -DANDROID_PLATFORM="android-$ANDROID_API" \
@@ -179,14 +108,12 @@ echo "==> frontend (Ymir $CORE_VER, $CORE_DESC, $CORE_DATE)"
 
 FE_OUT="$OUT/frontend"; mkdir -p "$FE_OUT"
 FE_OBJS=""
-FE_FLAGS="-fPIC -O2 -g0 -DANDROID -std=gnu++17 -Wall -Wextra -Wno-unused-parameter
+FE_FLAGS="-fPIC -O2 -g0 -DANDROID -std=gnu++20 -Wall -Wextra -Wno-unused-parameter
           -DSATURN_CORE_VERSION=\"$CORE_VER\"
           -DSATURN_CORE_DESC=\"$CORE_DESC\"
           -DSATURN_CORE_DATE=\"$CORE_DATE\"
-          -DSATURN_MEDIA_HTTP=1
-          -I$APP/frontend -I$CORE/vendor/stb/stb -I$CORE/retro/bridge
-          -I$IMGUI -I$IMGUI/backends -I$SDL3_PREFIX/include
-          -I$CURL_INC -I$OUT/curl-build/include -I$ZLIB_SRC/contrib -I$ZLIB_SRC"
+          -I$APP/frontend -I$CORE/vendor/stb/stb -I$APP/native/core/bridge
+          -I$IMGUI -I$IMGUI/backends -I$SDL3_PREFIX/include"
 
 for src in "$APP"/frontend/*.cpp \
            "$IMGUI"/imgui.cpp "$IMGUI"/imgui_draw.cpp "$IMGUI"/imgui_tables.cpp \
@@ -200,26 +127,11 @@ for src in "$APP"/frontend/*.cpp \
     FE_OBJS="$FE_OBJS $obj"
 done
 
-# minizip, compiled as C beside the frontend.
-echo "==> minizip"
-MZ_OBJS=""
-for src in "$ZLIB_SRC"/contrib/minizip/unzip.c "$ZLIB_SRC"/contrib/minizip/ioapi.c; do
-    obj="$FE_OUT/$(basename "${src%.c}").o"
-    "$TOOLCHAIN/bin/${TRIPLE}${ANDROID_API}-clang" -fPIC -O2 -g0 \
-        -I"$ZLIB_SRC" -I"$ZLIB_SRC/contrib/minizip" -c -o "$obj" "$src" || {
-        echo "error: minizip compile failed on $src" >&2; exit 1; }
-    MZ_OBJS="$MZ_OBJS $obj"
-done
-
 echo "==> linking libretrosaturn.so"
 # shellcheck disable=SC2086
 "$CXX" -shared -fPIC -o "$OUT/libretrosaturn.so" \
-    $FE_OBJS $MZ_OBJS "$CORE_SO" \
+    $FE_OBJS "$CORE_SO" \
     -L"$SDL3_PREFIX/lib" -lSDL3 \
-    "$CURL_LIB" \
-    "$MBEDTLS_PREFIX/lib/libmbedtls.a" \
-    "$MBEDTLS_PREFIX/lib/libmbedx509.a" \
-    "$MBEDTLS_PREFIX/lib/libmbedcrypto.a" \
     -lz -lm -ldl -llog -landroid \
     -Wl,--no-undefined
 
@@ -272,13 +184,10 @@ APP_LIBS="$HERE/app/libs"; mkdir -p "$APP_LIBS"
 ASSETS="$HERE/app/src/main/assets/assets"
 mkdir -p "$ASSETS"
 cp -f "$APP"/frontend/assets/* "$ASSETS/" 2>/dev/null || true
-# The demo disc is deliberately NOT packaged for Android.
-#
-# It is 83MB of mostly CD audio, which is incompressible -- gzip takes it to
-# 74MB -- and it would be the entire download for every user who installs the
-# app. A homebrew Pong is not worth that on a phone connection. The desktop
-# build still ships it, where it costs nothing, and demo_disc_path() returning
-# empty is already handled: the wizard's demo button simply is not offered.
+# The compact homebrew demo is available only through the setup wizard.
+DEMO_ASSETS="$HERE/app/src/main/assets/demo"
+mkdir -p "$DEMO_ASSETS"
+cp -f "$APP"/frontend/demo/* "$DEMO_ASSETS/"
 
 echo "==> installed for packaging:"
 ls -lh "$JNI_LIBS"/*.so

@@ -1,0 +1,6 @@
+cmake_minimum_required(VERSION 3.28)
+project(RetroSaturnCoreAndroid LANGUAGES C CXX)
+if(NOT ANDROID)
+  message(FATAL_ERROR "Configure with the Android NDK toolchain")
+endif()
+add_subdirectory("${CMAKE_CURRENT_LIST_DIR}/.." "${CMAKE_CURRENT_BINARY_DIR}/bridge")

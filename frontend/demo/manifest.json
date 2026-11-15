@@ -1,0 +1,11 @@
+{
+  "title": "Pixel Poppy Pong",
+  "author": "nando",
+  "source": "https://segaxtreme.net/resources/pixel-poppy-pong.282/",
+  "original_sha256": "6e58186e4146a9fad85b1faccf45a41f998bf6bf043395766783f36daa1f0d6c",
+  "data_track_sha256": "1d710f063945b385a1edbdea8224a4d0e9226f51451fb2599cc5e0fcfd28b174",
+  "original_bytes": 86372496,
+  "data_sectors": 552,
+  "audio_tracks": 13,
+  "packaged_bytes": 7414141
+}

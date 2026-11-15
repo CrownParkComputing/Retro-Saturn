@@ -1,4 +1,4 @@
 [submodule "core"]
 	path = core
-	url = https://github.com/CrownParkComputing/ymir.git
-	branch = cpc
+	url = https://github.com/ymir-emu/Ymir.git
+	branch = main

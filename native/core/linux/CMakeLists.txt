@@ -1,0 +1,5 @@
+cmake_minimum_required(VERSION 3.28)
+project(RetroSaturnCoreLinux LANGUAGES C CXX)
+set(RETRO_SATURN_CORE_TESTS ON CACHE BOOL "")
+enable_testing()
+add_subdirectory("${CMAKE_CURRENT_LIST_DIR}/.." "${CMAKE_CURRENT_BINARY_DIR}/bridge")

@@ -102,11 +102,9 @@ jobs:
           sudo apt-get install -y \
             libasound2-dev liblzma-dev pkg-config ninja-build clang cmake
       - name: Build Linux host tests + .so
-        run: core/retro/linux/build-ymir-linux.sh
+        run: |
+          cmake -S native/core/linux -B build/core-linux -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake --build build/core-linux --parallel 4
       - name: Run native tests
         run: |
-          # Every test the build produced, not a hand-maintained list of four.
-          # Five more were added over time and CI never ran any of them.
-          for t in core/retro/linux/build/ymir_*_test; do
-            echo "== $t"; "$t"
-          done
+          ctest --test-dir build/core-linux --output-on-failure --parallel 2

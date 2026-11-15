@@ -1,11 +1,42 @@
 #include "saturn_setup.h"
 #include "saturn_library.h"
+#include "saturn_artwork.h"
+#include "saturn_config.h"
 
 #include <SDL3/SDL.h>
 
 #include <vector>
+#include <filesystem>
 
 namespace saturn {
+
+std::string parent_for_discs(const std::string &directory)
+{
+    if (directory.empty()) return {};
+    std::filesystem::path path = std::filesystem::path(directory).lexically_normal();
+    if (path.filename().empty()) path = path.parent_path();
+    const std::string name = path.filename().string();
+    for (const char *alias : {"cd", "cds", "games", "roms", "discs", "disks", "iso", "isos"})
+        if (SDL_strcasecmp(name.c_str(), alias) == 0) return path.parent_path().string();
+    return path.string();
+}
+
+void configure_parent_folder(AppConfig &config, const std::string &directory)
+{
+    if (directory.empty()) return;
+    config.parent_root = std::filesystem::path(directory).lexically_normal().string();
+    config.disc_tree.clear();
+    config.disc_root = folder_for(config.parent_root, "cd");
+    if (scan_discs(config.disc_root).empty() && !scan_discs(config.parent_root).empty())
+        config.disc_root = config.parent_root;
+    config.saves_dir = folder_for(config.parent_root, "saves");
+    config.artwork_dir = folder_for(config.parent_root, "artwork");
+    SDL_CreateDirectory(config.parent_root.c_str());
+    SDL_CreateDirectory(folder_for(config.parent_root, "bios").c_str());
+    SDL_CreateDirectory(config.disc_root.c_str());
+    SDL_CreateDirectory(config.saves_dir.c_str());
+    SDL_CreateDirectory(config.artwork_dir.c_str());
+}
 
 namespace {
 
@@ -144,10 +175,11 @@ void pick_cb(void *, const char *const *filelist, int)
 
 std::string folder_for(const std::string &root, const std::string &kind)
 {
-    static const struct { const char *kind; const char *names[8]; } kAlias[] = {
-        { "bios",  { "bios", "BIOS", "system", nullptr } },
-        { "cd",    { "cd", "cds", "Games", "games", "roms", "discs", "iso", nullptr } },
+    static const struct { const char *kind; const char *names[12]; } kAlias[] = {
+        { "bios",  { "bios", "bios roms", "system", nullptr } },
+        { "cd",    { "cd", "cds", "games", "roms", "discs", "disks", "iso", "isos", nullptr } },
         { "saves", { "saves", "save", "saveram", "savedata", nullptr } },
+        { "artwork", { "artwork", "artworks", "covers", nullptr } },
     };
     if (root.empty()) return std::string();
 
@@ -163,8 +195,12 @@ std::string folder_for(const std::string &root, const std::string &kind)
     std::string first_existing;
     for (const auto &a : kAlias) {
         if (kind != a.kind) continue;
+        int child_count = 0;
+        char **children = SDL_GlobDirectory(root.c_str(), nullptr, 0, &child_count);
         for (int i = 0; a.names[i]; ++i) {
-            const std::string p = root + "/" + a.names[i];
+          for (int child = 0; children && child < child_count; ++child) {
+            if (SDL_strcasecmp(children[child], a.names[i]) != 0) continue;
+            const std::string p = root + "/" + children[child];
             SDL_PathInfo info;
             if (!SDL_GetPathInfo(p.c_str(), &info)) continue;
             if (info.type != SDL_PATHTYPE_DIRECTORY) continue;
@@ -178,16 +214,19 @@ std::string folder_for(const std::string &root, const std::string &kind)
                 const std::string name = found[j];
                 if (name.find('/') != std::string::npos) continue;
                 if (kind == "cd") { if (is_disc_image(name)) { has_something = true; break; } }
+                else if (kind == "artwork") { if (is_artwork_image(name)) { has_something = true; break; } }
                 else              { has_something = true; break; }
             }
             if (found) SDL_free(found);
-            if (has_something) return p;
+            if (has_something) { SDL_free(children); return p; }
+          }
         }
+        SDL_free(children);
         break;
     }
     if (!first_existing.empty()) return first_existing;
     /* Nothing there under any name it might have: this is the one to make. */
-    return root + "/" + kind;
+    return root + "/" + (kind == "cd" ? "games" : kind);
 }
 
 bool pickers_usable()

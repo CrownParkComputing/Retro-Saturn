@@ -96,6 +96,7 @@ android/app/libs/
 android/app/src/main/assets/
 android/build/
 android/.gradle/
+android/.kotlin/
 android/local.properties
 android/app/build/
 

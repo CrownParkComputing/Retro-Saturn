@@ -24,6 +24,10 @@
 
 namespace saturn {
 
+struct AppConfig;
+std::string parent_for_discs(const std::string &directory);
+void configure_parent_folder(AppConfig &config, const std::string &directory);
+
 /* ---- the bundled demo ----
  *
  * Pixel Poppy Pong, a free Saturn homebrew from the SegaXtreme competition.

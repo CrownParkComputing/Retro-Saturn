@@ -138,6 +138,7 @@ object SafBridge {
         "bios"  to listOf("bios", "bios roms", "system"),
         "cd"    to listOf("cd", "cds", "games", "roms", "discs", "disks", "iso", "isos"),
         "saves" to listOf("saves", "save", "saveram", "savedata", "backup"),
+        "artwork" to listOf("artwork", "artworks", "covers"),
     )
 
     /**
@@ -179,7 +180,7 @@ object SafBridge {
             ?: return false
         if (!root.canWrite()) return false
         for (kind in ALIASES.keys) {
-            if (findFolder(root, kind) == null) root.createDirectory(kind)
+            if (findFolder(root, kind) == null) root.createDirectory(if (kind == "cd") "games" else kind)
         }
         return true
     }
@@ -242,7 +243,8 @@ object SafBridge {
         val want = src.length()
 
         val dst = File(destDir, name)
-        if (dst.exists() && dst.length() == want) return dst.absolutePath
+        // Refresh local artwork on Rescan, including same-size replacements.
+        if (sub != "artwork" && dst.exists() && dst.length() == want) return dst.absolutePath
         File(destDir).mkdirs()
 
         progress = 0

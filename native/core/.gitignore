@@ -1,0 +1,5 @@
+# Build trees. The build scripts put theirs beside themselves.
+build/
+build-*/
+# android/build.sh writes the linked core here for an app to pick up.
+prebuilt/
