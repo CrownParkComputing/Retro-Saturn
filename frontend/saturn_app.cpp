@@ -500,9 +500,12 @@ int main(int argc, char **argv)
      * Both landscapes, not one: a handheld held either way up is still a
      * handheld, and people do hold them either way up.
      */
-    SDL_SetHint(SDL_HINT_ORIENTATIONS, "LandscapeLeft LandscapeRight");
 #if defined(SATURN_IOS)
+    // iPad scenes resize and rotate; the iPhone plist remains landscape-only.
+    SDL_SetHint(SDL_HINT_ORIENTATIONS, "LandscapeLeft LandscapeRight Portrait PortraitUpsideDown");
     SDL_SetHint(SDL_HINT_AUDIO_CATEGORY, "playback");
+#else
+    SDL_SetHint(SDL_HINT_ORIENTATIONS, "LandscapeLeft LandscapeRight");
 #endif
 
     if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_GAMEPAD)) {
@@ -512,8 +515,12 @@ int main(int argc, char **argv)
 
     SDL_Window *win = nullptr;
     SDL_Renderer *ren = nullptr;
+    SDL_WindowFlags window_flags = SDL_WINDOW_RESIZABLE;
+#if defined(SATURN_IOS)
+    window_flags |= SDL_WINDOW_BORDERLESS;
+#endif
     if (!SDL_CreateWindowAndRenderer("Retro-Saturn", 1280, 800,
-                                     SDL_WINDOW_RESIZABLE, &win, &ren)) {
+                                     window_flags, &win, &ren)) {
         SDL_Log("window: %s", SDL_GetError());
         return 1;
     }
