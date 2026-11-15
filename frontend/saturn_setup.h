@@ -27,6 +27,8 @@ namespace saturn {
 struct AppConfig;
 std::string parent_for_discs(const std::string &directory);
 void configure_parent_folder(AppConfig &config, const std::string &directory);
+void restore_folder_access();
+std::string resolve_stored_path(const std::string &path);
 
 /* ---- the bundled demo ----
  *
@@ -69,7 +71,7 @@ std::vector<std::string> candidate_disc_roots();
  * around it, which is the whole reason it is used rather than asking for
  * access to all files.
  */
-void begin_pick_folder();
+void begin_pick_folder(const std::string &initial = {});
 
 /** Whether the system can pick at all. Android's SDL backend answers
  *  SDL_Unsupported for folders and returns content:// URIs for files, neither
@@ -91,7 +93,7 @@ std::string find_bios_in(const std::string &dir);
  * is then the one to create.
  */
 std::string folder_for(const std::string &root, const std::string &kind);
-void begin_pick_file();
+void begin_pick_file(const std::string &initial = {});
 
 /* True while a dialog is open, so the caller can disable the button that
  * opened it rather than stacking three of them. */

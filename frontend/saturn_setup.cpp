@@ -2,13 +2,33 @@
 #include "saturn_library.h"
 #include "saturn_artwork.h"
 #include "saturn_config.h"
+#if defined(SATURN_IOS)
+#include "saturn_apple.h"
+#endif
 
 #include <SDL3/SDL.h>
 
 #include <vector>
 #include <filesystem>
+#include <mutex>
 
 namespace saturn {
+
+void restore_folder_access()
+{
+#if defined(SATURN_IOS)
+    apple_restore_folder_access();
+#endif
+}
+
+std::string resolve_stored_path(const std::string &path)
+{
+#if defined(SATURN_IOS)
+    return apple_resolve_path(path);
+#else
+    return path;
+#endif
+}
 
 std::string parent_for_discs(const std::string &directory)
 {
@@ -159,16 +179,20 @@ struct Pick {
     std::string path;
 };
 Pick g_pick;
+std::mutex pick_mutex;
+
+void finish_pick(const std::string &path)
+{
+    std::lock_guard lock(pick_mutex);
+    g_pick.open = false;
+    if (!path.empty()) { g_pick.path = path; g_pick.ready = true; }
+}
 
 void pick_cb(void *, const char *const *filelist, int)
 {
-    g_pick.open = false;
     /* A null list is an error; an empty one is a cancel. Neither is an
      * answer, and neither should overwrite what the user already had. */
-    if (filelist && filelist[0]) {
-        g_pick.path = filelist[0];
-        g_pick.ready = true;
-    }
+    finish_pick(filelist && filelist[0] ? filelist[0] : "");
 }
 
 } /* namespace */
@@ -282,27 +306,41 @@ std::string find_bios_in(const std::string &dir)
     return best;
 }
 
-bool pick_in_progress() { return g_pick.open; }
+bool pick_in_progress() { std::lock_guard lock(pick_mutex); return g_pick.open; }
 
 bool take_pick(std::string &out)
 {
+    std::lock_guard lock(pick_mutex);
     if (!g_pick.ready) return false;
     g_pick.ready = false;
     out = g_pick.path;
     return true;
 }
 
-void begin_pick_folder()
+void begin_pick_folder(const std::string &initial)
 {
-    if (g_pick.open) return;
-    g_pick.open = true;
-    SDL_ShowOpenFolderDialog(pick_cb, nullptr, nullptr, nullptr, false);
+    {
+        std::lock_guard lock(pick_mutex);
+        if (g_pick.open) return;
+        g_pick.open = true;
+    }
+#if defined(SATURN_IOS)
+    apple_pick_document(true, initial, finish_pick);
+#else
+    SDL_ShowOpenFolderDialog(pick_cb, nullptr, nullptr, initial.empty() ? nullptr : initial.c_str(), false);
+#endif
 }
 
-void begin_pick_file()
+void begin_pick_file(const std::string &initial)
 {
-    if (g_pick.open) return;
-    g_pick.open = true;
+    {
+        std::lock_guard lock(pick_mutex);
+        if (g_pick.open) return;
+        g_pick.open = true;
+    }
+#if defined(SATURN_IOS)
+    apple_pick_document(false, initial, finish_pick);
+#else
     /* A BIOS dump is a .bin most of the time and a .rom sometimes, but the
      * filter is deliberately loose: somebody's file is called what it is
      * called, and a picker that hides it is a picker they cannot use. */
@@ -310,7 +348,8 @@ void begin_pick_file()
         { "Saturn BIOS (*.bin, *.rom)", "bin;rom" },
         { "All files", "*" },
     };
-    SDL_ShowOpenFileDialog(pick_cb, nullptr, nullptr, filters, 2, nullptr, false);
+    SDL_ShowOpenFileDialog(pick_cb, nullptr, nullptr, filters, 2, initial.empty() ? nullptr : initial.c_str(), false);
+#endif
 }
 
 } /* namespace saturn */

@@ -6,6 +6,7 @@
 #include <array>
 #include <atomic>
 #include <cstring>
+#include <cstdlib>
 
 // Internal ring-buffer consumer, shared with the Android and ALSA backends.
 extern int32_t ymir_bridge_pull_audio(void *bridge, int16_t *out, int32_t frames);

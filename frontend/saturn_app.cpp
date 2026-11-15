@@ -32,6 +32,13 @@
 #include "saturn_setup.h"
 #include "touch_pad.h"
 
+#ifndef SATURN_APP_VERSION
+#define SATURN_APP_VERSION "2.2.0"
+#endif
+#ifndef SATURN_APP_BUILD
+#define SATURN_APP_BUILD "6"
+#endif
+
 /* Stamped in by the build script; sensible if it was not. */
 #ifndef SATURN_CORE_VERSION
 #  define SATURN_CORE_VERSION "unknown"
@@ -493,6 +500,9 @@ int main(int argc, char **argv)
      * handheld, and people do hold them either way up.
      */
     SDL_SetHint(SDL_HINT_ORIENTATIONS, "LandscapeLeft LandscapeRight");
+#if defined(SATURN_IOS)
+    SDL_SetHint(SDL_HINT_AUDIO_CATEGORY, "playback");
+#endif
 
     if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_GAMEPAD)) {
         SDL_Log("SDL_Init: %s", SDL_GetError());
@@ -551,7 +561,7 @@ int main(int argc, char **argv)
             ImGui::GetIO().Fonts->AddFontDefault(&font_config);
         }
         apply_style();
-#if defined(__ANDROID__)
+#if defined(__ANDROID__) || defined(SATURN_IOS)
         has_touch = true;
 #else
         int count = 0;
@@ -593,6 +603,7 @@ int main(int argc, char **argv)
     }
     const std::string cfg_path = cfg_dir + "retrosaturn.cfg";
 
+    saturn::restore_folder_access();
     saturn::AppConfig cfg;
     if (cfg.disc_root.empty()) {
         /* A sensible first guess, created on demand rather than at startup:
@@ -601,6 +612,8 @@ int main(int argc, char **argv)
             cfg.disc_root = std::string(home) + "Saturn";
     }
     saturn::load_app_config(cfg_path, cfg);
+    for (std::string *path : {&cfg.parent_root, &cfg.disc_root, &cfg.bios_path, &cfg.artwork_dir, &cfg.saves_dir})
+        *path = saturn::resolve_stored_path(*path);
 
     if (cfg.disc_tree.empty()) {
         if (cfg.parent_root.empty()) cfg.parent_root = saturn::parent_for_discs(cfg.disc_root);
@@ -1342,6 +1355,7 @@ int main(int argc, char **argv)
     };
     char search[96] = {0};
     bool quit = false;
+    bool app_background = false;
 
     auto return_to_wizard = [&] {
         if (!demo_session) return;
@@ -1390,6 +1404,13 @@ int main(int argc, char **argv)
         while (SDL_PollEvent(&ev)) {
             ImGui_ImplSDL3_ProcessEvent(&ev);
             if (ev.type == SDL_EVENT_QUIT) quit = true;
+            if (ev.type == SDL_EVENT_WILL_ENTER_BACKGROUND) {
+                app_background = true;
+                ymir_bridge_set_presentation_paused(ymir, 1);
+                save_bram();
+                ymir_bridge_save_smpc_state(ymir, smpc_path.c_str());
+            }
+            if (ev.type == SDL_EVENT_DID_ENTER_FOREGROUND) app_background = false;
             if (demo_session && ev.type == SDL_EVENT_KEY_DOWN &&
                 (ev.key.scancode == SDL_SCANCODE_ESCAPE ||
                  ev.key.scancode == SDL_SCANCODE_AC_BACK)) {
@@ -1803,7 +1824,7 @@ int main(int argc, char **argv)
                 }
                 ImGui::Spacing();
                 ImGui::BeginDisabled(saturn::pick_in_progress());
-                if (ImGui::Button("Choose another folder...")) saturn::begin_pick_folder();
+                if (ImGui::Button("Choose another folder...")) saturn::begin_pick_folder(cfg.parent_root);
                 ImGui::EndDisabled();
                 {
                     std::string got;
@@ -1838,7 +1859,7 @@ int main(int argc, char **argv)
                                 bprimed = true; }
                 if (saturn::pickers_usable()) {
                     ImGui::BeginDisabled(saturn::pick_in_progress());
-                    if (ImGui::Button("Choose the BIOS file...")) saturn::begin_pick_file();
+                    if (ImGui::Button("Choose the BIOS file...")) saturn::begin_pick_file(cfg.parent_root.empty() ? cfg.disc_root : saturn::folder_for(cfg.parent_root, "bios"));
                     ImGui::EndDisabled();
                 } else {
                     /*
@@ -3227,7 +3248,7 @@ int main(int argc, char **argv)
                         TextDimWrapped("Contains bios, games, artwork and saves. Existing folder names and flat disc libraries are supported.");
                         if (saturn::pickers_usable()) {
                             ImGui::BeginDisabled(saturn::pick_in_progress());
-                            if (ImGui::Button("Choose parent folder...")) saturn::begin_pick_folder();
+                            if (ImGui::Button("Choose parent folder...")) saturn::begin_pick_folder(cfg.parent_root);
                             ImGui::EndDisabled();
                         } else if (saturn::saf_available()) {
                             if (ImGui::Button("Choose parent folder...")) saturn::saf_pick();
@@ -3260,7 +3281,7 @@ int main(int argc, char **argv)
                         }
                         if (saturn::pickers_usable()) {
                             ImGui::BeginDisabled(saturn::pick_in_progress());
-                            if (ImGui::Button("Browse BIOS...")) saturn::begin_pick_file();
+                            if (ImGui::Button("Browse BIOS...")) saturn::begin_pick_file(cfg.parent_root.empty() ? cfg.disc_root : saturn::folder_for(cfg.parent_root, "bios"));
                             ImGui::EndDisabled();
                         } else if (ImGui::Button("Find the BIOS")) {
                             adopt_bios_from_discs();
@@ -3601,7 +3622,7 @@ int main(int argc, char **argv)
             }
 
             else {
-                ImGui::TextUnformatted("Retro-Saturn");
+                ImGui::Text("Retro-Saturn %s (%s)", SATURN_APP_VERSION, SATURN_APP_BUILD);
                 TextDimWrapped("A Sega Saturn emulator. The emulation is Ymir's work, "
                                "not ours.");
 
@@ -3881,7 +3902,7 @@ int main(int argc, char **argv)
          * places that change the view is how you end up with a machine still
          * playing music behind a menu. */
         {
-            const bool want = running_view && !show_pause;
+            const bool want = running_view && !show_pause && !app_background;
             if (want != machine_running) {
                 machine_running = want;
                 ymir_bridge_set_presentation_paused(ymir, want ? 0 : 1);
