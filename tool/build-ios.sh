@@ -24,6 +24,7 @@ platform_flags=(-DCMAKE_SYSTEM_NAME=iOS -DCMAKE_OSX_SYSROOT="$sdk"
 "$cmake_bin" -S "$sdl_src" -B "$sdl_build" -G Ninja "${platform_flags[@]}" \
   -DCMAKE_MAKE_PROGRAM="$ninja_bin" -DCMAKE_BUILD_TYPE=Release \
   -DCMAKE_INSTALL_PREFIX="$sdl_prefix" -DSDL_SHARED=OFF -DSDL_STATIC=ON \
+  -DSDL_CAMERA=OFF -DSDL_HIDAPI=OFF -DSDL_JOYSTICK_HIDAPI=OFF \
   -DSDL_TEST_LIBRARY=OFF -DSDL_TESTS=OFF -DSDL_EXAMPLES=OFF
 "$cmake_bin" --build "$sdl_build" --parallel "$jobs"
 "$cmake_bin" --install "$sdl_build"
