@@ -2,6 +2,8 @@ cmake_minimum_required(VERSION 3.28)
 project(RetroSaturn VERSION 2.2.0 LANGUAGES C CXX)
 set(SATURN_APP_BUILD "6" CACHE STRING "Store build number")
 set(SATURN_APPLE_TEAM "88A3T9K9C5" CACHE STRING "Existing Apple development team")
+set(SATURN_IOS_SIGNING_PROFILE "" CACHE STRING "Optional distribution profile UUID for an iOS archive")
+set(SATURN_IOS_SIGNING_IDENTITY "" CACHE STRING "Optional distribution certificate SHA-1 for an iOS archive")
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 find_package(SDL3 3.2 REQUIRED CONFIG)
@@ -40,6 +42,13 @@ if(IOS)
     XCODE_ATTRIBUTE_SKIP_INSTALL NO
     XCODE_ATTRIBUTE_INSTALL_PATH "/Applications"
     XCODE_ATTRIBUTE_ENABLE_USER_SCRIPT_SANDBOXING NO)
+  if(SATURN_IOS_SIGNING_PROFILE)
+    set_target_properties(RetroSaturn PROPERTIES
+      XCODE_ATTRIBUTE_CODE_SIGNING_ALLOWED YES
+      XCODE_ATTRIBUTE_CODE_SIGN_STYLE Manual
+      XCODE_ATTRIBUTE_CODE_SIGN_IDENTITY "${SATURN_IOS_SIGNING_IDENTITY}"
+      XCODE_ATTRIBUTE_PROVISIONING_PROFILE_SPECIFIER "${SATURN_IOS_SIGNING_PROFILE}")
+  endif()
 endif()
 file(STRINGS "${CMAKE_SOURCE_DIR}/core/CMakeLists.txt" version_line REGEX "^project\\(Ymir VERSION")
 string(REGEX MATCH "[0-9]+\\.[0-9]+\\.[0-9]+" core_version "${version_line}")
