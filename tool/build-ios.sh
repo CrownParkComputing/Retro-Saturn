@@ -31,4 +31,7 @@ platform_flags=(-DCMAKE_SYSTEM_NAME=iOS -DCMAKE_OSX_SYSROOT="$sdk"
   -DSDL3_DIR="$sdl_prefix/lib/cmake/SDL3" -DBUILD_TESTING=OFF \
   -DSATURN_APP_BUILD="$build_number" -DCMAKE_XCODE_ATTRIBUTE_CODE_SIGNING_ALLOWED=NO \
   -DCMAKE_XCODE_ATTRIBUTE_SKIP_INSTALL=YES
+# Xcode archive can leave the normal product path linked to its archive staging area.
+product="$out/$sdk/Release-$sdk/RetroSaturn.app"
+if [ -L "$product" ]; then rm "$product"; fi
 "$cmake_bin" --build "$out/$sdk" --config Release --target RetroSaturn --parallel "$jobs"
