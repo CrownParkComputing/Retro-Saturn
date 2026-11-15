@@ -1,0 +1,5 @@
+message(STATUS "Retro-Saturn: embedding Ymir software rendering; GPU shaders are not built")
+set(DXC_DXIL_SUPPORTED OFF)
+set(DXC_SPIRV_SUPPORTED OFF)
+function(compile_shader)
+endfunction()
