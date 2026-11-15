@@ -9,10 +9,14 @@ build_number="${IOS_BUILD_NUMBER:-6}"
 jobs="${JOBS:-4}"
 out="$PWD/build/apple"
 sdl_src="$out/SDL"
+sdl_tag="release-3.4.18"
 sdl_build="$out/sdl-$sdk"
 sdl_prefix="$out/sdl-install-$sdk"
 if [ ! -d "$sdl_src/.git" ]; then
-  git clone --depth 1 --branch release-3.2.20 https://github.com/libsdl-org/SDL.git "$sdl_src"
+  git clone --depth 1 --branch "$sdl_tag" https://github.com/libsdl-org/SDL.git "$sdl_src"
+elif [ "$(git -C "$sdl_src" describe --tags --exact-match 2>/dev/null || true)" != "$sdl_tag" ]; then
+  git -C "$sdl_src" fetch --depth 1 origin "refs/tags/$sdl_tag:refs/tags/$sdl_tag"
+  git -C "$sdl_src" checkout --detach "$sdl_tag"
 fi
 platform_flags=(-DCMAKE_SYSTEM_NAME=iOS -DCMAKE_OSX_SYSROOT="$sdk"
   -DCMAKE_OSX_ARCHITECTURES=arm64 -DCMAKE_OSX_DEPLOYMENT_TARGET=15.0
